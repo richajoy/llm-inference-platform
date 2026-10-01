@@ -121,6 +121,12 @@ spec:
 
   # ---------------------------------------------------------------------------
   # Prometheus Triggers
+  #
+  # Metric names: vLLM >= 0.10 renamed vllm:gpu_cache_usage_perc to
+  # vllm:kv_cache_usage_perc and split vllm:time_per_output_token_seconds into
+  # vllm:inter_token_latency_seconds (per token) and
+  # vllm:request_time_per_output_token_seconds (per request). Queries below
+  # use `or` so one ScaledObject works across image versions.
   # ---------------------------------------------------------------------------
   triggers:
 
@@ -149,7 +155,7 @@ spec:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
         query: |
           histogram_quantile(0.99,
-            sum(rate(vllm:time_per_output_token_seconds_bucket{namespace="inference"}[5m]))
+            sum(rate(vllm:inter_token_latency_seconds_bucket{namespace="inference"}[5m]) or rate(vllm:time_per_output_token_seconds_bucket{namespace="inference"}[5m]))
             by (le)
           )
         threshold: "0.1"
@@ -195,10 +201,26 @@ spec:
       metadata:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
         query: |
-          avg(vllm:gpu_cache_usage_perc{namespace="inference"})
+          avg(vllm:kv_cache_usage_perc{namespace="inference"} or vllm:gpu_cache_usage_perc{namespace="inference"})
         threshold: "0.85"
         activationThreshold: "0.5"
         metricName: vllm_kv_cache_pct
+      metricType: AverageValue
+
+    # ── Trigger 7: Preemption Rate (KV-cache thrash) ──────────────────────
+    # vLLM preempts a running sequence when allocate_slots() finds no free
+    # KV block (recompute preemption: the request restarts from token 0).
+    # Each preemption is wasted prefill work. A sustained rate means the
+    # KV-cache pool, not compute, is the bottleneck; adding a replica adds
+    # a whole new pool. Zero is the healthy value.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          sum(rate(vllm:num_preemptions_total{namespace="inference"}[5m]))
+        threshold: "0.5"
+        activationThreshold: "0.05"
+        metricName: vllm_preemptions_per_s
       metricType: AverageValue
 
     # ── Trigger 6: Running Requests (Batch Saturation) ────────────────────

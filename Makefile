@@ -79,6 +79,10 @@ install-network-operator: ## Install Network Operator (for InfiniBand)
 	@echo "==> Installing Network Operator..."
 	cd $(ROOT_DIR)/platform/network-operator && bash install.sh
 
+install-scheduler: ## Install KAI Scheduler (queues, fractional GPU, preemption)
+	@echo "==> Installing KAI Scheduler..."
+	cd $(ROOT_DIR)/platform/scheduler && bash install.sh
+
 install-keda: ## Install KEDA event-driven autoscaler
 	@echo "==> Installing KEDA..."
 	cd $(ROOT_DIR)/platform/autoscaling && bash keda-install.sh

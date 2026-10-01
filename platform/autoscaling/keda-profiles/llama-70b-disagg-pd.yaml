@@ -134,7 +134,7 @@ spec:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
         query: |
           histogram_quantile(0.99,
-            sum(rate(vllm:time_per_output_token_seconds_bucket{namespace="inference",pod=~"vllm-70b-decode.*"}[5m]))
+            sum(rate(vllm:inter_token_latency_seconds_bucket{namespace="inference",pod=~"vllm-70b-decode.*"}[5m]) or rate(vllm:time_per_output_token_seconds_bucket{namespace="inference",pod=~"vllm-70b-decode.*"}[5m]))
             by (le)
           )
         threshold: "0.05"
@@ -147,7 +147,7 @@ spec:
       metadata:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
         query: |
-          avg(vllm:gpu_cache_usage_perc{namespace="inference",pod=~"vllm-70b-decode.*"})
+          avg(vllm:kv_cache_usage_perc{namespace="inference",pod=~"vllm-70b-decode.*"} or vllm:gpu_cache_usage_perc{namespace="inference",pod=~"vllm-70b-decode.*"})
         threshold: "0.80"
         activationThreshold: "0.5"
         metricName: decode_kv_cache

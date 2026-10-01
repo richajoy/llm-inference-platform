@@ -14,11 +14,13 @@ Production-grade infrastructure for deploying large language models on Kubernete
 +===========================================================================+
 |  LAYER 4: ENTERPRISE      LiteLLM Gateway | NeMo Guardrails | LLM Guard  |
 +===========================================================================+
-|  LAYER 3: INFERENCE        vLLM (5 profiles) | llm-d | Dynamo            |
+|  LAYER 3b: SERVING        llm-d (KV-aware routing) | Dynamo (disagg P/D)  |
+|  LAYER 3a: ENGINES        vLLM: 6 profiles (MIG, TP, FP8, EAGLE3, P/D)   |
 +===========================================================================+
-|  LAYER 2: PLATFORM         GPU Operator | Monitoring | Gateway API       |
+|  LAYER 2: PLATFORM        GPU Operator/MIG | KAI Scheduler (Run:ai core) |
+|                           KEDA on vLLM metrics | DCGM + Prometheus       |
 +===========================================================================+
-|  LAYER 1: INFRASTRUCTURE   Terraform (GKE) | k3s/kubeadm Bootstrap       |
+|  LAYER 1: INFRASTRUCTURE  Terraform (GKE) | k3s/kubeadm Bootstrap        |
 +===========================================================================+
 ```
 
@@ -49,8 +51,10 @@ make deploy-enterprise
 - **5 Inference Profiles**: MIG slicing, tensor parallelism, FP8 quantization, EAGLE3 speculative decoding, disaggregated prefill/decode
 - **Enterprise Gateway**: LiteLLM proxy with API key auth, RBAC, rate limiting, and cost tracking
 - **Layered Safety**: LLM Guard (fast input scanning) + NeMo Guardrails (deep conversational safety)
-- **GPU Optimization**: MIG partitioning, KV-cache aware routing via llm-d, prefix caching
-- **Full Observability**: Prometheus + Grafana + DCGM Exporter with custom dashboards and alerts
+- **Serving control plane**: llm-d InferencePool with KV-cache-aware endpoint picking, NVIDIA Dynamo for disaggregated prefill/decode over NIXL
+- **Multi-tenant GPU scheduling**: KAI Scheduler (open-source core of NVIDIA Run:ai) with hierarchical queues, GPU quotas, fractional GPUs, priority preemption and gang scheduling
+- **Event-driven autoscaling**: KEDA ScaledObjects on vLLM's own metrics (queue depth, KV-cache usage, preemption rate, TTFT/ITL p99), scale-to-zero
+- **Full Observability**: DCGM (per GPU and per MIG slice, profiling counters) + vLLM + scheduler metrics in Prometheus, Grafana dashboards, 25 alert rules
 - **Infrastructure as Code**: Terraform for GKE (production) plus k3s/kubeadm bootstrap for any single GPU node (dev)
 - **Benchmark Suite**: vLLM bench, Locust load testing, k6 CI/CD gates, ops:byte analysis tools
 
@@ -70,8 +74,8 @@ make deploy-enterprise
 ```
 llm-inference-platform/
 ├── infra/              # Layer 1: Terraform (GKE), k3s/kubeadm bootstrap, Karpenter
-├── platform/           # Layer 2: GPU Operator, Monitoring, Gateway API
-├── inference/          # Layer 3: vLLM profiles, llm-d, Dynamo
+├── platform/           # Layer 2: GPU Operator, KAI Scheduler, KEDA, Monitoring, Gateway API
+├── inference/          # Layer 3: vLLM profiles (engines), llm-d and Dynamo (serving)
 ├── enterprise/         # Layer 4: LiteLLM, NeMo Guardrails, LLM Guard
 ├── benchmarks/         # Layer 5: vLLM bench, Locust, k6, analysis tools
 ├── docs/               # Architecture docs, runbooks, guides
@@ -82,10 +86,13 @@ llm-inference-platform/
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/architecture.md) | Full system architecture with data flow diagrams |
+| [Reference Architecture](docs/reference-architecture.md) | The stack, request path, the three control loops (route / scale / place), tenancy model, failure domains |
+| [Architecture](docs/architecture.md) | Component-level architecture with data flow diagrams |
+| [Observability](docs/observability.md) | DCGM, vLLM and scheduler metric catalogue and which loop consumes each series |
 | [Ops:Byte Analysis](docs/ops-byte-analysis.md) | Theoretical foundation: arithmetic intensity for LLM inference |
 | [GPU Roofline Model](docs/gpu-roofline-model.md) | Roofline analysis per GPU (A100, H100, H200, B200) |
 | [MIG Sizing Guide](docs/mig-sizing-guide.md) | MIG profile selection for model/workload combinations |
+| [Multi-tenant scheduling](platform/scheduler/README.md) | KAI Scheduler queues, quotas, fractional GPUs, preemption; mapping to NVIDIA Run:ai |
 | [Speculative Decoding](docs/speculative-decoding-guide.md) | EAGLE3 and classic speculative decoding configuration |
 | [Deployment Runbook](docs/deployment-runbook.md) | Step-by-step from zero to production |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
@@ -102,6 +109,8 @@ make setup-gke             # Provision GKE with H100 node pool
 
 # Platform
 make install-platform      # GPU Operator + Monitoring + Gateway
+make install-scheduler     # KAI Scheduler: queues, fractional GPU, preemption
+make install-keda          # KEDA, then install-keda-objects for the vLLM ScaledObjects
 
 # Inference
 make deploy-8b-mig         # Llama 8B on MIG slices

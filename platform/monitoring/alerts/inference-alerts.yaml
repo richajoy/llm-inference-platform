@@ -36,7 +36,7 @@ spec:
       rules:
         # KV-cache nearly full
         - alert: KVCacheCritical
-          expr: vllm:gpu_cache_usage_perc > 0.95
+          expr: (vllm:kv_cache_usage_perc or vllm:gpu_cache_usage_perc) > 0.95
           for: 5m
           labels:
             severity: critical
@@ -46,7 +46,7 @@ spec:
 
         # KV-cache high
         - alert: KVCacheHigh
-          expr: vllm:gpu_cache_usage_perc > 0.85
+          expr: (vllm:kv_cache_usage_perc or vllm:gpu_cache_usage_perc) > 0.85
           for: 10m
           labels:
             severity: warning

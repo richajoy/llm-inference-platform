@@ -62,7 +62,7 @@ spec:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
         query: |
           histogram_quantile(0.99,
-            sum(rate(vllm:time_per_output_token_seconds_bucket{namespace="inference",model_name=~".*70B.*FP8.*"}[5m]))
+            sum(rate(vllm:inter_token_latency_seconds_bucket{namespace="inference",model_name=~".*70B.*FP8.*"}[5m]) or rate(vllm:time_per_output_token_seconds_bucket{namespace="inference",model_name=~".*70B.*FP8.*"}[5m]))
             by (le)
           )
         threshold: "0.08"
@@ -84,7 +84,7 @@ spec:
       metadata:
         serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
         query: |
-          avg(vllm:gpu_cache_usage_perc{namespace="inference",model_name=~".*70B.*FP8.*"})
+          avg(vllm:kv_cache_usage_perc{namespace="inference",model_name=~".*70B.*FP8.*"} or vllm:gpu_cache_usage_perc{namespace="inference",model_name=~".*70B.*FP8.*"})
         threshold: "0.85"
         activationThreshold: "0.5"
         metricName: vllm_fp8_kv_cache
