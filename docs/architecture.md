@@ -67,10 +67,10 @@ The Enterprise LLM Inference Platform is a production-grade Kubernetes-based sys
 |                      LAYER 1: INFRASTRUCTURE                              |
 |  infra/                                                                   |
 |  +---------------------+  +---------------------+  +------------------+  |
-|  | RunPod Terraform     |  | GKE Terraform       |  | K8s Bootstrap    |  |
-|  | - 8xH100 SXM pod    |  | - A3 Ultra nodepool  |  | - k3s install    |  |
-|  | - 500Gi storage      |  | - InfiniBand network |  | - kubeadm setup  |  |
-|  | - GPU selection      |  | - Multi-zone HA      |  | - Helm + repos   |  |
+|  | k8s-base module      |  | GKE Terraform       |  | K8s Bootstrap    |  |
+|  | - namespaces/RBAC    |  | - A3 Ultra nodepool  |  | - k3s install    |  |
+|  | - storage classes    |  | - InfiniBand network |  | - kubeadm setup  |  |
+|  | - GPU node labels    |  | - Multi-zone HA      |  | - Helm + repos   |  |
 |  +---------------------+  +---------------------+  +------------------+  |
 +===========================================================================+
 ```
@@ -160,7 +160,7 @@ The Enterprise LLM Inference Platform is a production-grade Kubernetes-based sys
 | Layer | Component | Technology | Version | Purpose |
 |-------|-----------|-----------|---------|---------|
 | 1 | IaC | Terraform | >= 1.5 | Multi-cloud provisioning |
-| 1 | K8s (dev) | k3s | latest | Lightweight K8s on RunPod |
+| 1 | K8s (dev) | k3s / kubeadm | latest | Single-node K8s on any GPU host |
 | 1 | K8s (prod) | GKE | 1.29+ | Managed K8s with GPU support |
 | 2 | GPU Management | NVIDIA GPU Operator | v24.9 | Driver, toolkit, DCGM, MIG |
 | 2 | Networking | NVIDIA Network Operator | v24.7 | InfiniBand, SR-IOV, GPUDirect RDMA |
@@ -193,11 +193,11 @@ The Enterprise LLM Inference Platform is a production-grade Kubernetes-based sys
 
 ## Network Architecture
 
-### Intra-Node Communication (RunPod 8xH100 SXM)
+### Intra-Node Communication (single 8xH100 SXM node)
 
 ```
     +---------------------------------------------------------------+
-    |                    RunPod 8xH100 SXM Pod                      |
+    |                     8xH100 SXM node (HGX)                     |
     |                                                               |
     |   GPU 0 <--NVLink--> GPU 1 <--NVLink--> GPU 2 <--NVLink-->   |
     |     |                  |                  |                   |
@@ -214,7 +214,7 @@ The Enterprise LLM Inference Platform is a production-grade Kubernetes-based sys
     +---------------------------------------------------------------+
 ```
 
-Within a single node, all 8 H100 SXM GPUs are connected via NVSwitch providing full 900 GB/s bi-directional NVLink bandwidth. Tensor parallelism (TP) operations use NCCL over NVLink for all-reduce communication. This is the default for RunPod single-pod deployments.
+Within a single node, all 8 H100 SXM GPUs are connected via NVSwitch providing full 900 GB/s bi-directional NVLink bandwidth. Tensor parallelism (TP) operations use NCCL over NVLink for all-reduce communication. This is the default for single-node deployments.
 
 ### Inter-Node Communication (GKE Multi-Node)
 

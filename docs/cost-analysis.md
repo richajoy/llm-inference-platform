@@ -2,19 +2,9 @@
 
 ## Cloud GPU Pricing Comparison
 
-### RunPod
-
-| Configuration | GPU | On-Demand ($/hr) | Spot ($/hr) | Notes |
-|--------------|-----|-------------------|-------------|-------|
-| 1xH100 SXM 80GB | H100 | $2.69 | ~$1.89 | Single GPU |
-| 8xH100 SXM 80GB | H100 | $21.52 | ~$15.06 | Full node, NVLink |
-| 1xA100 SXM 80GB | A100 | $1.64 | ~$1.15 | Previous gen |
-| 8xA100 SXM 80GB | A100 | $13.12 | ~$9.18 | Full node |
-| 1xH200 SXM 141GB | H200 | $3.99 | ~$2.79 | When available |
-
-RunPod pricing is per-GPU-hour. The 8xH100 node is the primary development target for this platform.
-
-**Disk storage**: $0.07/GB/month for persistent volume (500 GB = $35/month)
+All per-token figures below use GKE `a3-highgpu-8g` pricing as the reference:
+**$2.50/GPU-hr with a 1-year CUD** ($19.97/hr ÷ 8) and **$3.90/GPU-hr on-demand**
+($31.21/hr ÷ 8). Substitute your own rate; the methodology is linear in $/GPU-hr.
 
 ### Google Cloud (GKE)
 
@@ -37,7 +27,7 @@ GKE adds:
 | p4d.24xlarge | 8xA100 40GB | $32.77 | $20.70 | $13.29 |
 | p5e.48xlarge | 8xH200 141GB | ~$115.00 | ~$72.68 | ~$46.68 |
 
-AWS pricing is significantly higher than RunPod due to enterprise features (SLAs, compliance, networking).
+AWS p5 on-demand is roughly 3x GKE a3 on-demand for the same 8xH100 node; reserved pricing narrows the gap to about 2x.
 
 ## Cost Per 1M Tokens
 
@@ -57,8 +47,8 @@ Decode throughput: ~84 tok/s per MIG instance
 Effective (70% util): ~59 tok/s
 Tokens per hour: 212,400
 
-GPU cost per MIG instance: $21.52/hr / 56 instances = $0.384/hr
-Cost per 1M tokens: $0.384 / 0.2124M = $1.81
+GPU cost per MIG instance: $19.97/hr / 56 instances = $0.357/hr (1yr CUD)
+Cost per 1M tokens: $0.357 / 0.2124M = $1.68
 ```
 
 ### Profile B: Llama 70B TP=4 (FP16)
@@ -69,8 +59,8 @@ With batching (avg B=8): ~190 tok/s aggregate
 Effective (70% util): ~133 tok/s
 Tokens per hour: 478,800
 
-GPU cost: 4 GPUs x $2.69/hr = $10.76/hr (RunPod)
-Cost per 1M tokens: $10.76 / 0.4788M = $22.47
+GPU cost: 4 GPUs x $2.50/hr = $9.98/hr (GKE 1yr CUD)
+Cost per 1M tokens: $9.98 / 0.4788M = $20.85
 ```
 
 ### Profile C: Llama 70B FP8 TP=2
@@ -81,8 +71,8 @@ With batching (avg B=8): ~376 tok/s aggregate
 Effective (70% util): ~263 tok/s
 Tokens per hour: 946,800
 
-GPU cost: 2 GPUs x $2.69/hr = $5.38/hr (RunPod)
-Cost per 1M tokens: $5.38 / 0.9468M = $5.68
+GPU cost: 2 GPUs x $2.50/hr = $4.99/hr (GKE 1yr CUD)
+Cost per 1M tokens: $4.99 / 0.9468M = $5.27
 ```
 
 ### Profile D: Llama 70B + EAGLE3 TP=4
@@ -93,8 +83,8 @@ With batching (avg B=4): ~230 tok/s aggregate
 Effective (70% util): ~161 tok/s
 Tokens per hour: 579,600
 
-GPU cost: 4 GPUs x $2.69/hr = $10.76/hr (RunPod)
-Cost per 1M tokens: $10.76 / 0.5796M = $18.56
+GPU cost: 4 GPUs x $2.50/hr = $9.98/hr (GKE 1yr CUD)
+Cost per 1M tokens: $9.98 / 0.5796M = $17.23
 
 Note: EAGLE3 improves per-request latency but aggregate throughput
 at high batch is comparable to Profile B.
@@ -110,8 +100,8 @@ Combined throughput (optimized): ~250 tok/s aggregate
 Effective (70% util): ~175 tok/s
 Tokens per hour: 630,000
 
-GPU cost: 8 GPUs x $2.69/hr = $21.52/hr (RunPod)
-Cost per 1M tokens: $21.52 / 0.630M = $34.16
+GPU cost: 8 GPUs x $2.50/hr = $19.97/hr (GKE 1yr CUD)
+Cost per 1M tokens: $19.97 / 0.630M = $31.70
 
 Note: Higher cost per token but optimized for latency SLAs
 under high concurrency.
@@ -119,24 +109,22 @@ under high concurrency.
 
 ### Summary: Cost per 1M Output Tokens
 
-| Profile | Model | GPUs | RunPod $/1M tok | GKE $/1M tok | Best For |
-|---------|-------|------|-----------------|--------------|----------|
-| A (MIG) | 8B FP8 | 1 MIG | $1.81 | $2.46 | Simple tasks, high volume |
-| B (TP4) | 70B FP16 | 4 | $22.47 | $30.56 | Quality baseline |
-| C (FP8) | 70B FP8 | 2 | $5.68 | $7.72 | Best quality/cost |
-| D (EAGLE3) | 70B FP16 | 4 | $18.56 | $25.24 | Low latency |
-| E (Disagg) | 70B FP16 | 8 | $34.16 | $46.46 | Latency SLAs at scale |
+| Profile | Model | GPUs | GKE 1yr CUD $/1M tok | GKE on-demand $/1M tok | Best For |
+|---------|-------|------|----------------------|------------------------|----------|
+| A (MIG) | 8B FP8 | 1 MIG | $1.68 | $2.62 | Simple tasks, high volume |
+| B (TP4) | 70B FP16 | 4 | $20.85 | $32.59 | Quality baseline |
+| C (FP8) | 70B FP8 | 2 | $5.27 | $8.24 | Best quality/cost |
+| D (EAGLE3) | 70B FP16 | 4 | $17.23 | $26.92 | Low latency |
+| E (Disagg) | 70B FP16 | 8 | $31.70 | $49.54 | Latency SLAs at scale |
 
 Profile C (FP8 on 2 GPUs) offers the best cost efficiency for 70B-class models, at 4x cheaper than Profile B with minimal quality impact.
 
-## Break-Even Analysis: RunPod vs Cloud
+## Break-Even Analysis: GKE vs AWS
 
 ### Monthly Cost Comparison (8xH100, 24/7)
 
 | Provider | Pricing Model | Monthly Cost |
 |----------|---------------|-------------|
-| RunPod | On-demand | $15,494/mo |
-| RunPod | Spot (~30% off) | $10,843/mo |
 | GKE | On-demand | $22,471/mo |
 | GKE | 1yr CUD | $14,378/mo |
 | GKE | 3yr CUD | $10,116/mo |
@@ -144,12 +132,12 @@ Profile C (FP8 on 2 GPUs) offers the best cost efficiency for 70B-class models, 
 | AWS | 1yr RI | $44,726/mo |
 | AWS | 3yr RI | $28,714/mo |
 
-### When RunPod Makes Sense
+### When a Self-Managed Cluster Makes Sense
 
-- **Development and experimentation**: Short-term, flexible, no commitment
-- **Cost-sensitive workloads**: 30-50% cheaper than cloud on-demand
-- **Simple deployments**: Single-node, no multi-region requirements
-- **Proof of concept**: Quick spin-up, quick tear-down
+- **Owned or colocated GPUs**: kubeadm/k3s on bare metal removes the cloud margin entirely
+- **Development and experimentation**: a single 8xH100 node runs every profile in this repo
+- **Data residency**: inference never leaves your network
+- **Proof of concept**: the same manifests move to GKE unchanged
 
 ### When GKE Makes Sense
 
@@ -157,7 +145,7 @@ Profile C (FP8 on 2 GPUs) offers the best cost efficiency for 70B-class models, 
 - **Multi-region**: Automatic failover across zones
 - **Enterprise compliance**: SOC2, HIPAA, FedRAMP
 - **Managed Kubernetes**: Automatic upgrades, node management
-- **Long-term commitment**: 3yr CUD pricing competitive with RunPod
+- **Long-term commitment**: 3yr CUD brings 8xH100 to ~$1.76/GPU-hr
 
 ### When AWS Makes Sense
 
@@ -178,14 +166,13 @@ FP8 halves GPU requirements for the same model quality:
 ### 2. MIG for Small Models
 
 Run 7 Llama 8B instances on 1 GPU instead of 7 GPUs:
-- Without MIG: 7 GPUs ($18.83/hr)
-- With MIG: 1 GPU ($2.69/hr)
+- Without MIG: 7 GPUs ($17.47/hr at $2.50/GPU-hr)
+- With MIG: 1 GPU ($2.50/hr)
 - **Savings: 86%**
 
 ### 3. Spot/Preemptible Instances
 
 Use spot pricing for non-critical workloads:
-- RunPod spot: ~30% savings
 - GKE preemptible: ~60-70% savings
 - **Risk**: Instance can be reclaimed with 30s notice
 
@@ -199,7 +186,7 @@ Match the GPU to the workload:
 
 Scale down during low-traffic periods:
 - Use HPA/KEDA to scale vLLM replicas to zero during off-hours
-- For RunPod: Terraform can destroy/recreate pods on schedule
+- Karpenter/cluster-autoscaler can drain GPU node pools to zero on schedule
 - **Savings: 50-70%** if traffic has strong diurnal patterns
 
 ### 6. Batching Optimization
@@ -220,15 +207,15 @@ If many requests share the same system prompt:
 
 ### Monthly TCO for a Production Deployment
 
-| Component | RunPod (Dev) | GKE (Prod) |
-|-----------|-------------|------------|
-| Compute (8xH100, 24/7) | $15,494 | $14,378 (1yr CUD) |
-| Storage (500 GB SSD) | $35 | $20 |
-| Networking (1 TB egress) | Included | $85 |
-| Monitoring (Prometheus) | Included (self-hosted) | $0 (self-hosted) |
-| GKE management fee | N/A | $73 |
-| Support | Community | $0-$500 (GCP support tier) |
-| **Total** | **~$15,529/mo** | **~$14,556/mo** |
+| Component | GKE (1yr CUD) | AWS EKS (1yr RI) |
+|-----------|---------------|------------------|
+| Compute (8xH100, 24/7) | $14,378 | $44,726 |
+| Storage (500 GB SSD) | $20 | $40 (gp3) |
+| Networking (1 TB egress) | $85 | $90 |
+| Monitoring (Prometheus) | $0 (self-hosted) | $0 (self-hosted) |
+| Cluster management fee | $73 | $73 |
+| Support | $0-$500 (support tier) | $0-$500 (support tier) |
+| **Total** | **~$14,556/mo** | **~$44,929/mo** |
 
 ### Per-Request Cost at Scale
 
@@ -238,10 +225,10 @@ Assuming 10M requests/day, average 200 output tokens/request:
 Total output tokens/day = 10M x 200 = 2B tokens
 Total output tokens/month = 60B tokens
 
-Using Profile C (FP8, $5.68/1M tokens):
-Monthly inference cost = 60,000 x $5.68 = $340,800
+Using Profile C (FP8, $5.27/1M tokens, GKE 1yr CUD):
+Monthly inference cost = 60,000 x $5.27 = $316,381
 
-Cost per request = $340,800 / 300M = $0.00114 (~$1.14 per 1000 requests)
+Cost per request = $316,381 / 300M = $0.00105 (~$1.05 per 1000 requests)
 ```
 
-For comparison, OpenAI GPT-4o charges $5.00/1M output tokens, making self-hosted inference approximately $5.00 / $5.68 = 0.88x the cost of OpenAI at this scale, before accounting for higher utilization and batching that self-hosting enables.
+For comparison, OpenAI GPT-4o charges $5.00/1M output tokens, making self-hosted inference approximately $5.00 / $5.27 = 0.95x the cost of OpenAI at this scale, before accounting for higher utilization and batching that self-hosting enables.

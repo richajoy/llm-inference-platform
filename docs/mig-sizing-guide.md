@@ -154,7 +154,7 @@ GPU 0-3: No MIG (full GPUs for Llama 70B TP=4)
 GPU 4-7: MIG all-1g-10gb (28 MIG instances for Llama 8B FP8)
 ```
 
-This requires the **mixed MIG strategy** (`values-mig-mixed.yaml`) where different GPUs have different MIG configurations. In practice, k3s on a single RunPod pod treats all GPUs as one node, so mixed MIG requires labeling at the GPU index level.
+This requires the **mixed MIG strategy** (`values-mig-mixed.yaml`) where different GPUs have different MIG configurations. In practice, a single-node k3s cluster presents all GPUs as one node, so mixed MIG requires labeling at the GPU index level.
 
 ### Scenario: Balanced MIG on 8xH100
 

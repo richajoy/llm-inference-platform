@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 ###############################################################################
-# k3s Installation Script for RunPod GPU Pods
+# k3s Installation Script for single-node GPU hosts
 #
 # Installs k3s v1.31+ with NVIDIA GPU runtime support for running
-# LLM inference workloads on RunPod 8xH100 SXM pods.
+# LLM inference workloads on a single GPU host (e.g. 8xH100 SXM).
 #
 # Usage:
 #   bash k3s-install.sh
 #
 # Prerequisites:
-#   - Running on a RunPod GPU pod with NVIDIA drivers installed
+#   - Running on a GPU host with NVIDIA drivers installed
 #   - Root access
 #   - Internet connectivity
 ###############################################################################
@@ -196,7 +196,7 @@ verify_gpu() {
 # -- Main ---------------------------------------------------------------------
 main() {
     echo "============================================================"
-    echo " k3s Installation for RunPod GPU Pod"
+    echo " k3s Installation for single-node GPU host"
     echo " k3s version: ${K3S_VERSION}"
     echo "============================================================"
     echo ""

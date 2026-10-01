@@ -18,7 +18,7 @@ Production-grade infrastructure for deploying large language models on Kubernete
 +===========================================================================+
 |  LAYER 2: PLATFORM         GPU Operator | Monitoring | Gateway API       |
 +===========================================================================+
-|  LAYER 1: INFRASTRUCTURE   Terraform (RunPod/GKE) | k3s/GKE Bootstrap   |
+|  LAYER 1: INFRASTRUCTURE   Terraform (GKE) | k3s/kubeadm Bootstrap       |
 +===========================================================================+
 ```
 
@@ -30,8 +30,8 @@ git clone https://github.com/richajoy/llm-inference-platform.git
 cd llm-inference-platform
 cp .env.example .env    # Fill in API keys
 
-# 2. Provision infrastructure (RunPod 8xH100)
-make setup-runpod
+# 2. Bootstrap a single GPU node (run on the host) or provision GKE
+make setup-k3s          # or: make setup-gke
 
 # 3. Install platform (GPU Operator, Monitoring, Gateway)
 make install-platform
@@ -51,7 +51,7 @@ make deploy-enterprise
 - **Layered Safety**: LLM Guard (fast input scanning) + NeMo Guardrails (deep conversational safety)
 - **GPU Optimization**: MIG partitioning, KV-cache aware routing via llm-d, prefix caching
 - **Full Observability**: Prometheus + Grafana + DCGM Exporter with custom dashboards and alerts
-- **Multi-Cloud IaC**: Terraform modules for RunPod (dev) and GKE (production)
+- **Infrastructure as Code**: Terraform for GKE (production) plus k3s/kubeadm bootstrap for any single GPU node (dev)
 - **Benchmark Suite**: vLLM bench, Locust load testing, k6 CI/CD gates, ops:byte analysis tools
 
 ## Deployment Profiles
@@ -69,7 +69,7 @@ make deploy-enterprise
 
 ```
 llm-inference-platform/
-├── infra/              # Layer 1: Terraform (RunPod/GKE), k3s bootstrap
+├── infra/              # Layer 1: Terraform (GKE), k3s/kubeadm bootstrap, Karpenter
 ├── platform/           # Layer 2: GPU Operator, Monitoring, Gateway API
 ├── inference/          # Layer 3: vLLM profiles, llm-d, Dynamo
 ├── enterprise/         # Layer 4: LiteLLM, NeMo Guardrails, LLM Guard
@@ -89,7 +89,7 @@ llm-inference-platform/
 | [Speculative Decoding](docs/speculative-decoding-guide.md) | EAGLE3 and classic speculative decoding configuration |
 | [Deployment Runbook](docs/deployment-runbook.md) | Step-by-step from zero to production |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
-| [Cost Analysis](docs/cost-analysis.md) | RunPod vs GKE vs AWS pricing and optimization |
+| [Cost Analysis](docs/cost-analysis.md) | GKE vs AWS pricing, cost per 1M tokens, optimization levers |
 
 ## Key Make Targets
 
@@ -97,7 +97,7 @@ llm-inference-platform/
 make help                  # Show all available targets
 
 # Infrastructure
-make setup-runpod          # Provision RunPod 8xH100 + k3s
+make setup-k3s             # Single-node k3s on a GPU host
 make setup-gke             # Provision GKE with H100 node pool
 
 # Platform
@@ -143,12 +143,12 @@ Results will be populated after running `make bench-all` on the target hardware.
 | Safety (Fast) | LLM Guard | Input/output text scanning (<50ms) |
 | Safety (Deep) | NeMo Guardrails | Conversational safety, topic control |
 | Monitoring | Prometheus + Grafana + DCGM | GPU and inference metrics |
-| IaC | Terraform | Multi-cloud provisioning (RunPod, GKE) |
+| IaC | Terraform | GKE provisioning, shared k8s-base module |
 | Speculative Decoding | EAGLE3 | 2-4x decode latency improvement |
 
 ## Prerequisites
 
-- RunPod account or GCP project with GPU quota
+- A GPU host with NVIDIA drivers, or a GCP project with GPU quota
 - HuggingFace token with access to Llama models
 - Terraform >= 1.5.0, kubectl >= 1.28, Helm >= 3.12
 

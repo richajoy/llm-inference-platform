@@ -329,18 +329,6 @@ kubectl get nicclusterpolicies
    terraform refresh
    ```
 
-### RunPod Terraform Provider Issues
-
-**Symptoms:**
-- Provider not found or version mismatch
-
-**Fixes:**
-```bash
-cd infra/terraform/runpod
-rm -rf .terraform .terraform.lock.hcl
-terraform init
-```
-
 ## Pod Scheduling Issues
 
 ### Pods Stuck in Pending

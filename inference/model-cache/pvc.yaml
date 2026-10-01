@@ -13,7 +13,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  # Use local-path for RunPod (NVMe-backed), standard for GKE
+  # Use local-path on a single NVMe-backed node, standard for GKE
   # Override with: kubectl apply -f pvc.yaml --set storageClassName=standard
   storageClassName: local-path
   resources:

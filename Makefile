@@ -2,7 +2,7 @@
 # Enterprise LLM Inference Platform - Top-Level Makefile
 # =============================================================================
 
-.PHONY: help setup-runpod setup-gke install-platform deploy-% bench-% clean
+.PHONY: help setup-gke install-platform deploy-% bench-% clean
 
 SHELL := /bin/bash
 ROOT_DIR := $(shell pwd)
@@ -41,15 +41,11 @@ help: ## Show this help
 # Infrastructure (Layer 1)
 # =============================================================================
 
-setup-runpod: ## Provision RunPod 8xH100 SXM pod and bootstrap k3s
-	@echo "==> Setting up RunPod infrastructure..."
-	cd $(ROOT_DIR)/infra && bash scripts/setup-runpod.sh
-
 setup-gke: ## Provision GKE cluster with H100 node pool
 	@echo "==> Setting up GKE infrastructure..."
 	cd $(ROOT_DIR)/infra && bash scripts/setup-gke.sh
 
-setup-k3s: ## Install k3s on current node (run on RunPod pod)
+setup-k3s: ## Install k3s on the current GPU node (single-node dev cluster)
 	@echo "==> Installing k3s..."
 	cd $(ROOT_DIR)/infra/k8s-bootstrap && bash k3s-install.sh
 

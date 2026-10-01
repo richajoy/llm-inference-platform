@@ -2,7 +2,7 @@
 # Shared Kubernetes Base Module
 #
 # Creates standard namespaces and common resources used across both
-# RunPod/k3s and GKE deployment targets.
+# single-node k3s/kubeadm and GKE deployment targets.
 ###############################################################################
 
 terraform {

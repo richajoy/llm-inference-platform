@@ -9,7 +9,7 @@ Usage: $(basename "$0") [OPTIONS]
 
 Install the entire Kubernetes platform layer in the correct order:
   1. GPU Operator (driver, toolkit, DCGM, MIG manager)
-  2. Network Operator (InfiniBand/RDMA - skipped on RunPod)
+  2. Network Operator (InfiniBand/RDMA - skipped when the host pre-configures IB)
   3. Monitoring (Prometheus, Grafana, DCGM Exporter, dashboards, alerts)
   4. Gateway API (CRDs + Envoy Gateway)
   5. Autoscaling (KEDA operator)

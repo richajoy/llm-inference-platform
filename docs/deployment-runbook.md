@@ -8,7 +8,7 @@ Step-by-step guide from zero to production deployment of the Enterprise LLM Infe
 
 | Service | Purpose | Required For |
 |---------|---------|-------------|
-| RunPod | GPU cloud provider (dev) | RunPod deployment |
+| GPU host (bare metal or any GPU cloud VM) | Single-node dev cluster | Single-node deployment |
 | Google Cloud | GKE cluster (prod) | Cloud production |
 | HuggingFace | Model weight downloads | All deployments |
 | GitHub | Source code | All deployments |
@@ -20,7 +20,6 @@ Step-by-step guide from zero to production deployment of the Enterprise LLM Infe
 cp .env.example .env
 
 # Required keys:
-RUNPOD_API_KEY=...       # RunPod API key
 HF_TOKEN=...             # HuggingFace token (read access to gated models)
 LITELLM_MASTER_KEY=...   # Master key for LiteLLM admin API
 GRAFANA_ADMIN_PASSWORD=... # Grafana login password
@@ -46,38 +45,30 @@ Request access to gated models before starting:
 
 ## Phase 1: Infrastructure Provisioning
 
-### Option A: RunPod (Development)
+### Option A: Single GPU Node (Development)
 
-**Step 1**: Provision the RunPod pod via Terraform:
+Any host with NVIDIA drivers and 8xH100 SXM (or fewer GPUs; the MIG and FP8
+profiles fit on 1-2 GPUs) works: bare metal, a colocated server, or a GPU
+cloud VM. The platform is provisioned on top of it with k3s.
+
+**Step 1**: Prepare the host:
 
 ```bash
-# Configure Terraform
-cd infra/terraform/runpod
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your RUNPOD_API_KEY
-
-# Initialize and apply
-terraform init
-terraform plan
-terraform apply
-
-# Save the output (SSH connection info)
-terraform output
+# Verify drivers and GPUs
+nvidia-smi
+# Recommended: 500 GB NVMe for the model cache (see inference/model-cache/pvc.yaml)
 ```
 
-This provisions a single pod with 8xH100 SXM GPUs, 500 GB disk.
-
-**Step 2**: SSH into the RunPod pod:
+**Step 2**: SSH into the host:
 
 ```bash
-# Use the SSH command from terraform output
-ssh root@<pod-ip> -p <port> -i ~/.ssh/id_rsa
+ssh <user>@<host-ip>
 ```
 
 **Step 3**: Install k3s:
 
 ```bash
-# On the RunPod pod
+# On the GPU host
 make setup-k3s
 ```
 

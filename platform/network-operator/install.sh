@@ -11,7 +11,7 @@ Usage: $(basename "$0") [OPTIONS]
 
 Install NVIDIA Network Operator for InfiniBand/RDMA networking.
 
-NOTE: Skip this on RunPod (InfiniBand is pre-configured).
+NOTE: Set SKIP_NETWORK_OPERATOR=1 when the host already has InfiniBand configured.
       Required on bare-metal, GKE, and EKS clusters with InfiniBand.
 
 Options:
@@ -50,10 +50,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Detect if running on RunPod (InfiniBand is pre-configured)
-if kubectl get nodes -o jsonpath='{.items[0].metadata.labels}' 2>/dev/null | grep -q "runpod.io"; then
-  echo "=== RunPod detected: Skipping Network Operator installation ==="
-  echo "  InfiniBand/RDMA is pre-configured on RunPod nodes."
+# Skip when the host already provides InfiniBand/RDMA
+if [ "${SKIP_NETWORK_OPERATOR:-0}" = "1" ]; then
+  echo "=== SKIP_NETWORK_OPERATOR=1: Skipping Network Operator installation ==="
+  echo "  InfiniBand/RDMA is assumed to be pre-configured on the nodes."
   echo "  NCCL will use InfiniBand automatically via NCCL_IB_DISABLE=0."
   exit 0
 fi
