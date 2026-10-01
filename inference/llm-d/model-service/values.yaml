@@ -1,0 +1,76 @@
+# llm-d ModelService Helm Values
+# Configures the model-serving layer that integrates vLLM with the Gateway API
+# Inference Extension for CRD-based model management
+
+# -- vLLM deployment defaults
+vllm:
+  image:
+    repository: vllm/vllm-openai
+    tag: "v0.8.5"
+    pullPolicy: IfNotPresent
+  # Default resources (overridden per-profile)
+  defaultResources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+  # Health check configuration
+  healthCheck:
+    readinessPath: /health
+    livenessPath: /health
+    startupFailureThreshold: 60
+    startupPeriodSeconds: 10
+
+# -- Model configurations
+models:
+  - name: "meta-llama/Llama-3.1-8B-Instruct"
+    displayName: "Llama 3.1 8B Instruct"
+    profile: llama-8b-mig
+    gpus: 1
+    tensorParallel: 1
+    maxModelLen: 4096
+
+  - name: "meta-llama/Llama-3.3-70B-Instruct"
+    displayName: "Llama 3.3 70B Instruct"
+    profile: llama-70b-tp4
+    gpus: 4
+    tensorParallel: 4
+    maxModelLen: 8192
+
+  - name: "nvidia/Llama-3.3-70B-Instruct-FP8"
+    displayName: "Llama 3.3 70B Instruct FP8"
+    profile: llama-70b-fp8-tp2
+    gpus: 2
+    tensorParallel: 2
+    maxModelLen: 16384
+
+# -- Model weights volume
+modelWeights:
+  pvcName: model-weights
+  mountPath: /models
+  readOnly: true
+
+# -- Shared memory for TP
+sharedMemory:
+  defaultSizeLimit: 4Gi
+  # Per-profile overrides
+  overrides:
+    llama-70b-tp4: 16Gi
+    llama-70b-fp8-tp2: 8Gi
+    llama-70b-eagle3: 16Gi
+
+# -- Namespace
+namespace: inference
+
+# -- Pod tolerations for GPU nodes
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+# -- Service configuration
+service:
+  type: ClusterIP
+  port: 8000

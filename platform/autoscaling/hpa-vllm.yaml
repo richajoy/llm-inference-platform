@@ -1,0 +1,55 @@
+# HorizontalPodAutoscaler for vLLM using custom metrics
+# Scales based on vLLM queue depth and KV-cache utilization.
+# Requires prometheus-adapter to expose custom metrics to the HPA controller.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm-hpa
+  namespace: inference
+  labels:
+    app: vllm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-llama-70b
+  minReplicas: 1
+  maxReplicas: 8
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 300
+  metrics:
+    # Scale on queue depth (waiting requests)
+    - type: Pods
+      pods:
+        metric:
+          name: vllm_num_requests_waiting
+        target:
+          type: AverageValue
+          averageValue: "10"
+    # Scale on KV-cache utilization
+    - type: Pods
+      pods:
+        metric:
+          name: vllm_gpu_cache_usage_perc
+        target:
+          type: AverageValue
+          averageValue: "0.8"
+    # Scale on GPU utilization as a fallback
+    - type: Pods
+      pods:
+        metric:
+          name: DCGM_FI_DEV_GPU_UTIL
+        target:
+          type: AverageValue
+          averageValue: "80"

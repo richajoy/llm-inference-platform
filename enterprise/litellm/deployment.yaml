@@ -1,0 +1,105 @@
+# LiteLLM Proxy Deployment
+# API gateway providing auth, RBAC, rate limiting, and model routing
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: litellm-secrets
+  namespace: enterprise
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: litellm
+type: Opaque
+stringData:
+  LITELLM_MASTER_KEY: "sk-master-changeme-use-sealed-secrets"
+  LITELLM_DATABASE_URL: "postgresql://litellm:changeme-use-sealed-secrets-in-prod@postgres.enterprise.svc.cluster.local:5432/litellm"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: enterprise
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: litellm
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: litellm
+        app.kubernetes.io/component: gateway
+        app.kubernetes.io/part-of: litellm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4000"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest
+          args:
+            - --config
+            - /etc/litellm/config.yaml
+            - --port
+            - "4000"
+            - --num_workers
+            - "4"
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+          env:
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secrets
+                  key: LITELLM_MASTER_KEY
+            - name: LITELLM_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secrets
+                  key: LITELLM_DATABASE_URL
+            - name: LITELLM_LOG_LEVEL
+              value: "INFO"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-config
+      terminationGracePeriodSeconds: 30

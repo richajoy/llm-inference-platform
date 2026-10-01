@@ -1,0 +1,88 @@
+# Base vLLM deployment template
+# This is the Kustomize base that all profile overlays patch against.
+# Do NOT deploy this directly -- use a profile overlay instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: inference
+  labels:
+    app: vllm
+    app.kubernetes.io/name: vllm
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+        app.kubernetes.io/name: vllm
+        app.kubernetes.io/component: inference-engine
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.8.5
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+          envFrom:
+            - configMapRef:
+                name: vllm-base-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60  # Allow up to 10 min for model loading
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: model-weights
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: model-weights
+          persistentVolumeClaim:
+            claimName: model-weights
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi

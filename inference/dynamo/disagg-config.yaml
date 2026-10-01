@@ -1,0 +1,75 @@
+# Dynamo Disaggregated Prefill/Decode Configuration
+# ConfigMap for NIXL-based KV cache transfer between P and D workers
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamo-disagg-config
+  namespace: inference
+  labels:
+    app: dynamo
+    app.kubernetes.io/name: dynamo-disagg-config
+    app.kubernetes.io/component: dynamo
+    app.kubernetes.io/part-of: llm-inference
+data:
+  # Prefill worker config
+  prefill.yaml: |
+    role: prefill
+    model:
+      name: meta-llama/Llama-3.3-70B-Instruct
+      path: /models/meta-llama--Llama-3.3-70B-Instruct
+      tensor_parallel_size: 4
+      gpu_memory_utilization: 0.90
+      max_model_len: 8192
+      dtype: auto
+    kv_transfer:
+      connector: nixl
+      role: sender
+      buffer_size_gb: 1
+      buffer_device: cuda
+      peer_host: dynamo-decode-worker
+      peer_port: 55555
+    server:
+      host: "0.0.0.0"
+      port: 8100
+
+  # Decode worker config
+  decode.yaml: |
+    role: decode
+    model:
+      name: meta-llama/Llama-3.3-70B-Instruct
+      path: /models/meta-llama--Llama-3.3-70B-Instruct
+      tensor_parallel_size: 4
+      gpu_memory_utilization: 0.90
+      max_model_len: 8192
+      dtype: auto
+    kv_transfer:
+      connector: nixl
+      role: receiver
+      buffer_size_gb: 1
+      buffer_device: cuda
+      peer_host: dynamo-prefill-worker
+      peer_port: 55555
+    server:
+      host: "0.0.0.0"
+      port: 8200
+
+  # Smart Router config
+  router.yaml: |
+    role: router
+    strategy: balanced
+    prefill_endpoints:
+      - host: dynamo-prefill-worker
+        port: 8100
+    decode_endpoints:
+      - host: dynamo-decode-worker
+        port: 8200
+    health_check:
+      interval_seconds: 5
+      timeout_seconds: 2
+    metrics:
+      queue_depth_weight: 0.4
+      kv_cache_weight: 0.3
+      gpu_util_weight: 0.3
+    server:
+      host: "0.0.0.0"
+      port: 8000

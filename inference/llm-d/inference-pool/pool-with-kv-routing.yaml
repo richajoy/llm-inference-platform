@@ -1,0 +1,29 @@
+# InferencePool with KV-cache aware endpoint routing
+# Uses the llm-d Endpoint Picker Plugin (EPP) to route requests
+# based on prefix cache hit probability, load, and queue depth.
+# This maximizes KV-cache reuse across requests with shared prefixes
+# (e.g., system prompts, RAG context, multi-turn conversations).
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferencePool
+metadata:
+  name: vllm-pool
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: vllm-pool
+    app.kubernetes.io/component: inference-routing
+    app.kubernetes.io/part-of: llm-inference
+  annotations:
+    description: "KV-cache aware request routing via llm-d EPP"
+spec:
+  # Selector matches vLLM pods that serve requests
+  targetPortNumber: 8000
+  selector:
+    app: vllm
+
+  # Endpoint Picker Plugin (EPP) sidecar for intelligent routing
+  endpointPickerConfig:
+    extensionRef:
+      name: vllm-epp
+      group: ""
+      kind: Service
+    # EPP uses scorer weights from the epp-config ConfigMap

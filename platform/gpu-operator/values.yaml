@@ -1,0 +1,170 @@
+# NVIDIA GPU Operator Helm values
+# Chart: nvidia/gpu-operator
+# Version: v24.9.x
+# Docs: https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/
+
+# -- Operator deployment settings
+operator:
+  defaultRuntime: containerd
+  validator:
+    imagePullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- NVIDIA Driver
+driver:
+  enabled: true
+  version: "560.35.03"
+  imagePullPolicy: IfNotPresent
+  manager:
+    env:
+      - name: ENABLE_AUTO_DRAIN
+        value: "true"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: feature.node.kubernetes.io/pci-10de.present
+              operator: In
+              values:
+                - "true"
+  resources:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+# -- NVIDIA Container Toolkit
+toolkit:
+  enabled: true
+  imagePullPolicy: IfNotPresent
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- Device Plugin
+devicePlugin:
+  enabled: true
+  imagePullPolicy: IfNotPresent
+  config:
+    name: device-plugin-config
+    default: ""
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- DCGM Exporter (GPU metrics for Prometheus)
+dcgmExporter:
+  enabled: true
+  imagePullPolicy: IfNotPresent
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    additionalLabels:
+      release: kube-prometheus-stack
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- MIG Manager
+migManager:
+  enabled: true
+  config:
+    name: mig-parted-config
+    default: all-disabled
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- GPU Feature Discovery
+gfd:
+  enabled: true
+  imagePullPolicy: IfNotPresent
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- GDR Copy (GPU Direct RDMA)
+gdrcopy:
+  enabled: true
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# -- Node Feature Discovery (NFD)
+# NFD is required for GPU feature detection
+nfd:
+  enabled: true
+  worker:
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+
+# -- Pod Security
+psp:
+  enabled: false
+
+# -- Sandbox workloads (vGPU/MPS)
+sandboxWorkloads:
+  enabled: false
+
+# -- vGPU Manager
+vgpuManager:
+  enabled: false
+
+# -- vGPU Device Manager
+vgpuDeviceManager:
+  enabled: false

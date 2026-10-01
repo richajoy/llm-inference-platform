@@ -1,0 +1,91 @@
+# InferencePool: Defines a pool of vLLM pods serving models
+# The Endpoint Picker (EPP) uses this to discover and route to healthy backends
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferencePool
+metadata:
+  name: vllm-pool
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: vllm-pool
+    app.kubernetes.io/component: inference-pool
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  # Label selector matching vLLM pods in this pool
+  selector:
+    app: vllm
+  # Port where vLLM pods serve the OpenAI API
+  targetPortNumber: 8000
+  # Reference to the Endpoint Picker deployment for inference-aware routing
+  extensionRef:
+    name: vllm-pool-epp
+---
+# Endpoint Picker Pod (EPP) deployment for this pool
+# Performs inference-aware load balancing based on queue depth and KV cache utilization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-pool-epp
+  namespace: inference
+  labels:
+    app: vllm-pool-epp
+    app.kubernetes.io/name: vllm-pool-epp
+    app.kubernetes.io/component: endpoint-picker
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm-pool-epp
+  template:
+    metadata:
+      labels:
+        app: vllm-pool-epp
+    spec:
+      containers:
+        - name: epp
+          image: us-central1-docker.pkg.dev/k8s-staging-gateway-api-inference/gateway-api-inference-extension/epp:main
+          args:
+            - "--pool-name=vllm-pool"
+            - "--pool-namespace=inference"
+            - "--grpc-port=9002"
+            - "--metrics-port=9090"
+          ports:
+            - name: grpc
+              containerPort: 9002
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          readinessProbe:
+            grpc:
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-pool-epp
+  namespace: inference
+  labels:
+    app: vllm-pool-epp
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-pool-epp
+  ports:
+    - name: grpc
+      port: 9002
+      targetPort: grpc
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

@@ -1,0 +1,111 @@
+# DCGM Exporter Helm values
+# Chart: nvidia/dcgm-exporter (standalone, or via GPU Operator)
+# Version: 3.3.x
+# Docs: https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/latest/
+#
+# NOTE: DCGM Exporter is typically deployed via the GPU Operator.
+#       Use this standalone values file only if deploying DCGM separately.
+
+# -- Image settings
+image:
+  repository: nvcr.io/nvidia/k8s/dcgm-exporter
+  tag: 3.3.8-3.6.0-ubuntu22.04
+  pullPolicy: IfNotPresent
+
+# -- Service and ServiceMonitor
+service:
+  type: ClusterIP
+  port: 9400
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9400"
+
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  interval: 15s
+  additionalLabels:
+    release: kube-prometheus-stack
+  relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+
+# -- Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# -- Tolerations for GPU nodes
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+# -- Node affinity - only run on GPU nodes
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: nvidia.com/gpu.present
+              operator: In
+              values:
+                - "true"
+
+# -- Arguments to dcgm-exporter
+arguments:
+  - "-f"
+  - "/etc/dcgm-exporter/dcp-metrics-included.csv"
+
+# -- Custom metrics CSV
+# Includes MIG-specific metrics for multi-instance GPU monitoring
+extraConfigMapVolumes:
+  - name: dcgm-metrics
+    configMap:
+      name: dcgm-metrics-config
+      items:
+        - key: metrics.csv
+          path: dcp-metrics-included.csv
+
+# -- ConfigMap with custom metrics
+# Override default DCGM metrics to include MIG instance fields
+extraEnv:
+  - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
+    value: "uid"
+  - name: DCGM_EXPORTER_COLLECTORS
+    value: "/etc/dcgm-exporter/dcp-metrics-included.csv"
+
+# -- Metrics to collect (CSV format)
+# Applied as a ConfigMap; includes standard + MIG metrics
+mapPodsMetrics: true
+
+# Custom metrics configuration
+customMetrics: |
+  # Format: DCGM_FI_FIELD_ID, Prometheus metric type, help text
+  DCGM_FI_DEV_GPU_UTIL,       gauge, GPU utilization
+  DCGM_FI_DEV_MEM_COPY_UTIL,  gauge, Memory utilization
+  DCGM_FI_DEV_FB_FREE,        gauge, Free framebuffer memory (MiB)
+  DCGM_FI_DEV_FB_USED,        gauge, Used framebuffer memory (MiB)
+  DCGM_FI_DEV_GPU_TEMP,       gauge, GPU temperature (C)
+  DCGM_FI_DEV_POWER_USAGE,    gauge, Power usage (W)
+  DCGM_FI_DEV_SM_CLOCK,       gauge, SM clock frequency (MHz)
+  DCGM_FI_DEV_MEM_CLOCK,      gauge, Memory clock frequency (MHz)
+  DCGM_FI_DEV_PCIE_TX_THROUGHPUT, gauge, PCIe TX throughput (KB/s)
+  DCGM_FI_DEV_PCIE_RX_THROUGHPUT, gauge, PCIe RX throughput (KB/s)
+  DCGM_FI_DEV_XID_ERRORS,     gauge, XID error count
+  DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, NVLink total bandwidth (MB/s)
+  DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU license status
+  DCGM_FI_DEV_POWER_VIOLATION, gauge, Throttling duration due to power (us)
+  DCGM_FI_DEV_THERMAL_VIOLATION, gauge, Throttling duration due to thermal (us)
+  DCGM_FI_PROF_GR_ENGINE_ACTIVE, gauge, Ratio of time GR engine is active
+  DCGM_FI_PROF_SM_ACTIVE,     gauge, Ratio of SMs that are active
+  DCGM_FI_PROF_SM_OCCUPANCY,  gauge, SM occupancy ratio
+  DCGM_FI_PROF_DRAM_ACTIVE,   gauge, Ratio of time DRAM is active
+  DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of time tensor cores active
+  DCGM_FI_PROF_PIPE_FP16_ACTIVE, gauge, Ratio of time FP16 pipes active

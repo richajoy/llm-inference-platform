@@ -1,0 +1,100 @@
+# NicClusterPolicy Custom Resource
+# Defines the cluster-wide network configuration for NVIDIA NICs.
+# Manages RDMA, IPoIB, and Multus secondary networks.
+apiVersion: mellanox.com/v1alpha1
+kind: NicClusterPolicy
+metadata:
+  name: nic-cluster-policy
+spec:
+  # MOFED driver for InfiniBand/RoCE
+  ofedDriver:
+    image: mofed
+    repository: nvcr.io/nvidia/mellanox
+    version: "24.07-0.6.1.0"
+    startupProbe:
+      initialDelaySeconds: 60
+      periodSeconds: 20
+    livenessProbe:
+      initialDelaySeconds: 120
+      periodSeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 60
+      periodSeconds: 30
+
+  # RDMA shared device plugin
+  rdmaSharedDevicePlugin:
+    image: k8s-rdma-shared-dev-plugin
+    repository: ghcr.io/mellanox
+    version: v1.5.1
+    config: |
+      {
+        "configList": [
+          {
+            "resourceName": "rdma_shared_device_a",
+            "rdmaHcaMax": 63,
+            "selectors": {
+              "vendors": ["15b3"],
+              "deviceIDs": ["101b", "101d"],
+              "ifNames": ["ib0", "ib1"]
+            }
+          }
+        ]
+      }
+
+  # SR-IOV device plugin for InfiniBand VFs
+  sriovDevicePlugin:
+    image: sriov-network-device-plugin
+    repository: ghcr.io/k8snetworkplumbingwg
+    version: v3.7.0
+    config: |
+      {
+        "resourceList": [
+          {
+            "resourcePrefix": "nvidia.com",
+            "resourceName": "sriov_rdma",
+            "selectors": {
+              "vendors": ["15b3"],
+              "deviceIDs": ["101b", "101d"],
+              "drivers": ["mlx5_core"],
+              "isRdma": true
+            }
+          }
+        ]
+      }
+
+  # Secondary network with Multus CNI
+  secondaryNetwork:
+    multus:
+      image: multus-cni
+      repository: ghcr.io/k8snetworkplumbingwg
+      version: v4.0.2
+    cniPlugins:
+      image: plugins
+      repository: ghcr.io/k8snetworkplumbingwg
+      version: v1.5.0
+    ipamPlugin:
+      image: whereabouts
+      repository: ghcr.io/k8snetworkplumbingwg
+      version: v0.7.0
+---
+# NetworkAttachmentDefinition for IPoIB
+# Pods requesting InfiniBand networking add this as an annotation:
+#   k8s.v1.cni.cncf.io/networks: ipoib-network
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: ipoib-network
+  namespace: inference
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "ipoib-network",
+      "type": "ipoib",
+      "master": "ib0",
+      "ipam": {
+        "type": "whereabouts",
+        "range": "10.56.217.0/24",
+        "exclude": ["10.56.217.0/32"]
+      }
+    }

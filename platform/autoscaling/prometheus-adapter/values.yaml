@@ -1,0 +1,116 @@
+# Prometheus Adapter Helm values
+# Exposes vLLM and DCGM Prometheus metrics as Kubernetes custom metrics
+# so that HPA and VariantAutoscaler can use them for scaling decisions.
+#
+# Install: helm install prometheus-adapter prometheus-community/prometheus-adapter \
+#            -n monitoring -f values.yaml
+prometheus:
+  url: http://kube-prometheus-stack-prometheus.monitoring.svc
+  port: 9090
+
+# Rules map Prometheus metrics to Kubernetes custom metrics API
+rules:
+  custom:
+    # --- vLLM inference metrics ---
+
+    # Queue depth: number of requests waiting to be processed
+    - seriesQuery: 'vllm:num_requests_waiting{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        as: "vllm_num_requests_waiting"
+      metricsQuery: 'avg(vllm:num_requests_waiting{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # Running requests: number of requests currently being processed
+    - seriesQuery: 'vllm:num_requests_running{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        as: "vllm_num_requests_running"
+      metricsQuery: 'avg(vllm:num_requests_running{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # KV-cache utilization: percentage of GPU KV-cache memory used
+    - seriesQuery: 'vllm:gpu_cache_usage_perc{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        as: "vllm_gpu_cache_usage_perc"
+      metricsQuery: 'avg(vllm:gpu_cache_usage_perc{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # Time to first token (P99): prefill latency indicator
+    - seriesQuery: 'vllm:time_to_first_token_seconds_bucket{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+      name:
+        as: "ttft_p99"
+      metricsQuery: 'histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket{<<.LabelMatchers>>}[2m])) by (le, <<.GroupBy>>))'
+
+    # Time per output token (P99): decode latency indicator
+    - seriesQuery: 'vllm:time_per_output_token_seconds_bucket{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+      name:
+        as: "tpot_p99"
+      metricsQuery: 'histogram_quantile(0.99, sum(rate(vllm:time_per_output_token_seconds_bucket{<<.LabelMatchers>>}[2m])) by (le, <<.GroupBy>>))'
+
+    # Queue depth (service-level aggregate for VariantAutoscaler)
+    - seriesQuery: 'vllm:num_requests_waiting{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+      name:
+        as: "queue_depth"
+      metricsQuery: 'sum(vllm:num_requests_waiting{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # KV-cache usage percentage (service-level for VariantAutoscaler)
+    - seriesQuery: 'vllm:gpu_cache_usage_perc{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+      name:
+        as: "kv_cache_usage"
+      metricsQuery: 'avg(vllm:gpu_cache_usage_perc{<<.LabelMatchers>>}) by (<<.GroupBy>>) * 100'
+
+    # --- DCGM GPU metrics ---
+
+    # GPU utilization percentage
+    - seriesQuery: 'DCGM_FI_DEV_GPU_UTIL{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        as: "DCGM_FI_DEV_GPU_UTIL"
+      metricsQuery: 'avg(DCGM_FI_DEV_GPU_UTIL{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+    # GPU memory utilization percentage
+    - seriesQuery: 'DCGM_FI_DEV_MEM_COPY_UTIL{namespace="inference"}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        as: "DCGM_FI_DEV_MEM_COPY_UTIL"
+      metricsQuery: 'avg(DCGM_FI_DEV_MEM_COPY_UTIL{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+
+# Resource limits for the adapter itself
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Adapter serves metrics at these API paths
+apiGroups:
+  - custom.metrics.k8s.io
+  - external.metrics.k8s.io

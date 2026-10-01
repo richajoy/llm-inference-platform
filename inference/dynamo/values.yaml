@@ -1,0 +1,119 @@
+# NVIDIA Dynamo Helm Chart Values
+# Dynamo provides disaggregated serving with Smart Router for LLM inference
+# Docs: https://github.com/ai-dynamo/dynamo
+#
+# Dynamo components:
+# - Smart Router: Request-level scheduling across prefill/decode workers
+# - NIXL: High-bandwidth KV cache transfer
+# - Planner: Capacity-aware autoscaling
+
+# -- Global settings
+global:
+  namespace: inference
+  imageRegistry: nvcr.io/nvidia/dynamo
+
+# -- Smart Router (request scheduler)
+smartRouter:
+  enabled: true
+  replicas: 2
+  image:
+    repository: nvcr.io/nvidia/dynamo/smart-router
+    tag: "25.03"
+    pullPolicy: IfNotPresent
+  port: 8000
+  # Routing strategy: throughput-optimized, latency-optimized, balanced
+  strategy: balanced
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  # Metrics for routing decisions
+  metrics:
+    queueDepthWeight: 0.4
+    kvCacheWeight: 0.3
+    gpuUtilWeight: 0.3
+
+# -- Prefill Worker configuration
+prefillWorker:
+  enabled: true
+  replicas: 1
+  model: "meta-llama/Llama-3.3-70B-Instruct"
+  modelPath: "/models/meta-llama--Llama-3.3-70B-Instruct"
+  port: 8100
+  tensorParallelSize: 4
+  gpuMemoryUtilization: 0.90
+  maxModelLen: 8192
+  resources:
+    requests:
+      nvidia.com/gpu: 4
+      cpu: "8"
+      memory: 64Gi
+    limits:
+      nvidia.com/gpu: 4
+      cpu: "16"
+      memory: 128Gi
+
+# -- Decode Worker configuration
+decodeWorker:
+  enabled: true
+  replicas: 1
+  model: "meta-llama/Llama-3.3-70B-Instruct"
+  modelPath: "/models/meta-llama--Llama-3.3-70B-Instruct"
+  port: 8200
+  tensorParallelSize: 4
+  gpuMemoryUtilization: 0.90
+  maxModelLen: 8192
+  resources:
+    requests:
+      nvidia.com/gpu: 4
+      cpu: "8"
+      memory: 64Gi
+    limits:
+      nvidia.com/gpu: 4
+      cpu: "16"
+      memory: 128Gi
+
+# -- NIXL configuration (KV cache transfer)
+nixl:
+  enabled: true
+  bufferSizeGB: 1
+  bufferDevice: cuda
+  transport: rdma  # rdma or tcp
+  port: 55555
+
+# -- Planner (autoscaler)
+planner:
+  enabled: false  # Enable for production autoscaling
+  minPrefillReplicas: 1
+  maxPrefillReplicas: 4
+  minDecodeReplicas: 1
+  maxDecodeReplicas: 4
+  targetQueueDepth: 10
+  scaleUpCooldown: 60
+  scaleDownCooldown: 300
+
+# -- Model weights volume
+modelWeights:
+  pvcName: model-weights
+  mountPath: /models
+
+# -- Shared memory
+sharedMemory:
+  sizeLimit: 16Gi
+
+# -- Tolerations
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+# -- ServiceMonitor
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+  interval: 15s

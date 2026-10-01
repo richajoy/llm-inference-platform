@@ -1,0 +1,21 @@
+# MIG Profile: balanced
+# Creates a mixed profile per H100 GPU (80GB):
+#   1x 3g.40gb  (for medium models / high-priority traffic)
+#   4x 1g.10gb  (for small models / batch inference)
+#
+# Ideal for: Multi-tenant clusters serving mixed workloads
+# Requires MIG mixed strategy (values-mig-mixed.yaml)
+#
+# Apply by labeling nodes:
+#   kubectl label node <node> nvidia.com/mig.config=balanced --overwrite
+#
+# H100 SXM5 80GB: 3g.40gb uses 42GB, 4x 1g.10gb uses 40GB => fits in 80GB
+
+version: v1
+mig-configs:
+  balanced:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "3g.40gb": 1
+        "1g.10gb": 4

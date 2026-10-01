@@ -1,0 +1,182 @@
+# kube-prometheus-stack Helm values
+# Chart: prometheus-community/kube-prometheus-stack
+# Version: 65.x
+# Docs: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+
+# -- Grafana
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: /var/lib/grafana/dashboards
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+  service:
+    type: ClusterIP
+    port: 3000
+  ingress:
+    enabled: false
+  # Default datasource
+  additionalDataSources:
+    - name: Prometheus
+      type: prometheus
+      url: http://kube-prometheus-stack-prometheus.monitoring:9090
+      access: proxy
+      isDefault: true
+
+# -- Prometheus
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    retentionSize: "45GB"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+    resources:
+      limits:
+        cpu: "2"
+        memory: 8Gi
+      requests:
+        cpu: 500m
+        memory: 2Gi
+    # Scrape configs for vLLM and LiteLLM
+    additionalScrapeConfigs:
+      - job_name: vllm-metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - inference
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: vllm
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+)
+            replacement: ${1}:8000
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_label_model]
+            target_label: model
+      - job_name: litellm-metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - enterprise
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: litellm
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+)
+            replacement: ${1}:4000
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+    # Enable ServiceMonitor discovery across namespaces
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorNamespaceSelector: {}
+    ruleSelectorNilUsesHelmValues: false
+    ruleNamespaceSelector: {}
+
+# -- Alertmanager
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+# -- Kube State Metrics
+kubeStateMetrics:
+  enabled: true
+
+# -- Node Exporter
+nodeExporter:
+  enabled: true
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# -- Prometheus Operator
+prometheusOperator:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- Default rules
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: true
+    configReloaders: true
+    general: true
+    k8s: true
+    kubeApiserverAvailability: true
+    kubeApiserverBurnrate: true
+    kubeApiserverHistogram: true
+    kubeApiserverSlos: true
+    kubeControllerManager: true
+    kubelet: true
+    kubeProxy: true
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeSchedulerAlerting: true
+    kubeSchedulerRecording: true
+    kubeStateMetrics: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true

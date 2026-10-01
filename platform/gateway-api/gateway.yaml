@@ -1,0 +1,78 @@
+# Gateway resource - defines the listener that accepts incoming traffic.
+# Routes (HTTPRoute) attach to this Gateway to direct traffic to backends.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: llm-gateway
+  namespace: gateway
+  annotations:
+    # Enable access logging for debugging
+    gateway.envoyproxy.io/enable-access-log: "true"
+spec:
+  gatewayClassName: envoy-gateway
+  listeners:
+    # HTTP listener for inference API traffic
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: "true"
+        kinds:
+          - kind: HTTPRoute
+    # HTTPS listener (when TLS is configured)
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: llm-gateway-tls
+            namespace: gateway
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: "true"
+        kinds:
+          - kind: HTTPRoute
+---
+# Label namespaces to allow route attachment
+# Apply labels to inference and enterprise namespaces:
+#   kubectl label namespace inference gateway-access=true
+#   kubectl label namespace enterprise gateway-access=true
+---
+# ReferenceGrant allows the Gateway in 'gateway' namespace
+# to reference TLS secrets and services in other namespaces.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-gateway-to-inference
+  namespace: inference
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: gateway
+  to:
+    - group: ""
+      kind: Service
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-gateway-to-enterprise
+  namespace: enterprise
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: gateway
+  to:
+    - group: ""
+      kind: Service

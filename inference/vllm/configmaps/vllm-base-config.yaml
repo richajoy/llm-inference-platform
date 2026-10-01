@@ -1,0 +1,28 @@
+# Base vLLM environment variables shared across all profiles
+# Profile-specific args are set in each profile's deployment patch
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-base-config
+  namespace: inference
+  labels:
+    app: vllm
+    app.kubernetes.io/name: vllm-base-config
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+data:
+  # Logging
+  VLLM_LOGGING_LEVEL: "INFO"
+  # Disable usage stats collection in production
+  VLLM_NO_USAGE_STATS: "1"
+  # Use v1 engine (default in vLLM >=0.8)
+  VLLM_USE_V1: "1"
+  # HuggingFace cache directory (model weights PVC mount)
+  HF_HOME: "/models/.cache"
+  # Enable hf_transfer for faster downloads if needed at runtime
+  HF_HUB_ENABLE_HF_TRANSFER: "1"
+  # NCCL tuning for multi-GPU tensor parallelism
+  NCCL_DEBUG: "WARN"
+  NCCL_SOCKET_IFNAME: "eth0"
+  # Ray configuration (used by TP/PP workers)
+  RAY_DEDUP_LOGS: "1"

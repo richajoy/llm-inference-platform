@@ -1,0 +1,215 @@
+# =============================================================================
+# KEDA ScaledObject for vLLM Inference Deployments
+# =============================================================================
+#
+# Event-driven autoscaling using Prometheus triggers against vLLM metrics.
+# KEDA creates and manages an HPA behind the scenes, providing:
+#   - Multiple Prometheus-based triggers with activation thresholds
+#   - Fallback behavior when metrics are unavailable
+#   - Scale-to-zero capability (optional, disabled by default)
+#   - Richer scaling policies than vanilla HPA
+#
+# Prerequisites:
+#   1. KEDA operator installed:  make install-keda
+#   2. Prometheus monitoring:    make install-monitoring
+#   3. vLLM deployed:            make deploy-70b-tp4
+#
+# Apply:  kubectl apply -f platform/autoscaling/keda-vllm.yaml
+# Verify: kubectl get scaledobjects -n inference
+#         kubectl get hpa -n inference  (KEDA creates this automatically)
+# =============================================================================
+---
+# TriggerAuthentication for secure Prometheus access.
+# Required when Prometheus uses authentication (e.g., OpenShift Thanos).
+# For in-cluster Prometheus without auth, the ScaledObject connects directly.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-prometheus-auth
+  namespace: inference
+spec:
+  # Uncomment for bearer token auth (e.g., OpenShift monitoring):
+  # secretTargetRef:
+  #   - parameter: bearerToken
+  #     name: keda-prometheus-token
+  #     key: token
+  # Uncomment for basic auth:
+  # secretTargetRef:
+  #   - parameter: username
+  #     name: keda-prometheus-creds
+  #     key: username
+  #   - parameter: password
+  #     name: keda-prometheus-creds
+  #     key: password
+  {}
+
+---
+# =============================================================================
+# Primary ScaledObject: Llama 3.3 70B TP=4 (Baseline Profile)
+# =============================================================================
+#
+# This is the main autoscaling config for the 70B baseline deployment.
+# 6 triggers cover all critical SLO dimensions:
+#   1. P99 TTFT (prefill latency SLO)
+#   2. P99 ITL/TPOT (decode latency SLO)
+#   3. E2E request latency (overall SLO)
+#   4. Queue depth (capacity pressure)
+#   5. KV-cache usage (memory pressure)
+#   6. Running requests (batch saturation)
+#
+# Scaling decision: ANY trigger exceeding its threshold causes scale-up.
+# All triggers must be below thresholds for scale-down.
+# =============================================================================
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-70b-tp4-keda
+  namespace: inference
+  labels:
+    app: vllm-70b-tp4
+    app.kubernetes.io/component: autoscaler
+    app.kubernetes.io/part-of: llm-inference
+  annotations:
+    description: "SLO-driven autoscaling for Llama 3.3 70B TP=4"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-70b-tp4
+
+  # Replica bounds
+  minReplicaCount: 1      # Always-on inference (no cold start)
+  maxReplicaCount: 8       # Max replicas (8 replicas × 4 GPUs = 32 GPUs)
+  # idleReplicaCount: 0    # Uncomment for scale-to-zero (see keda-scale-to-zero.yaml)
+
+  pollingInterval: 15      # Check metrics every 15s
+  cooldownPeriod: 300      # Wait 5min after last scale-up before scaling down
+
+  # ---------------------------------------------------------------------------
+  # Fallback: when Prometheus is unreachable, maintain this many replicas
+  # Prevents catastrophic scale-down during monitoring outages
+  # ---------------------------------------------------------------------------
+  fallback:
+    failureThreshold: 5     # After 5 consecutive failures
+    replicas: 2              # Maintain 2 replicas as safety net
+
+  # ---------------------------------------------------------------------------
+  # HPA behavior policies (KEDA passes these to the underlying HPA)
+  # GPU pods take 2-5 min to load models, so scaling must be conservative
+  # ---------------------------------------------------------------------------
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 60    # Prevent flapping
+          policies:
+            - type: Pods
+              value: 2                       # Max +2 pods per window
+              periodSeconds: 120             # Every 2 minutes
+          selectPolicy: Max
+        scaleDown:
+          stabilizationWindowSeconds: 300   # 5 min stabilization
+          policies:
+            - type: Pods
+              value: 1                       # Max -1 pod per window
+              periodSeconds: 300             # Every 5 minutes
+            - type: Percent
+              value: 25                      # Or max 25% reduction
+              periodSeconds: 300
+          selectPolicy: Min                  # Use the most conservative policy
+
+  # ---------------------------------------------------------------------------
+  # Prometheus Triggers
+  # ---------------------------------------------------------------------------
+  triggers:
+
+    # ── Trigger 1: P99 Time to First Token (Prefill SLO) ──────────────────
+    # TTFT measures prefill phase latency. When P99 exceeds 3s, the model
+    # is compute-saturated and needs more replicas to spread prefill load.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:time_to_first_token_seconds_bucket{namespace="inference"}[5m]))
+            by (le)
+          )
+        threshold: "3"
+        activationThreshold: "0.5"    # Don't scale at low traffic (TTFT noise)
+        metricName: vllm_ttft_p99
+      metricType: AverageValue
+
+    # ── Trigger 2: P99 Inter-Token Latency / TPOT (Decode SLO) ────────────
+    # ITL measures decode phase latency per token. When P99 exceeds 100ms,
+    # the model is memory-bandwidth saturated or batch size is too high.
+    # This is THE critical metric for streaming user experience.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:time_per_output_token_seconds_bucket{namespace="inference"}[5m]))
+            by (le)
+          )
+        threshold: "0.1"
+        activationThreshold: "0.03"   # 30ms baseline is normal
+        metricName: vllm_itl_p99
+      metricType: AverageValue
+
+    # ── Trigger 3: P99 End-to-End Request Latency ─────────────────────────
+    # Overall request latency = TTFT + (output_tokens × ITL).
+    # Catches scenarios where individual metrics are OK but combined
+    # latency breaches SLO (e.g., very long outputs).
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:e2e_request_latency_seconds_bucket{namespace="inference"}[5m]))
+            by (le)
+          )
+        threshold: "30"
+        activationThreshold: "5"
+        metricName: vllm_e2e_p99
+      metricType: AverageValue
+
+    # ── Trigger 4: Request Queue Depth ────────────────────────────────────
+    # Number of requests waiting to be processed. Direct measure of
+    # capacity saturation. Most responsive trigger for burst traffic.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          sum(vllm:num_requests_waiting{namespace="inference"})
+        threshold: "10"
+        activationThreshold: "2"
+        metricName: vllm_queue_depth
+      metricType: AverageValue
+
+    # ── Trigger 5: KV-Cache Usage ─────────────────────────────────────────
+    # Percentage of GPU KV-cache memory used. When approaching 95%,
+    # vLLM starts preempting (evicting) sequences, causing retries
+    # and cascading latency. Scale before this happens.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          avg(vllm:gpu_cache_usage_perc{namespace="inference"})
+        threshold: "0.85"
+        activationThreshold: "0.5"
+        metricName: vllm_kv_cache_pct
+      metricType: AverageValue
+
+    # ── Trigger 6: Running Requests (Batch Saturation) ────────────────────
+    # Number of requests actively being processed. When close to
+    # max-num-seqs (default 256), new requests must queue.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          avg(vllm:num_requests_running{namespace="inference"})
+        threshold: "64"
+        activationThreshold: "16"
+        metricName: vllm_batch_size
+      metricType: AverageValue

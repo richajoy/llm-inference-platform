@@ -1,0 +1,26 @@
+# Service for Llama 405B multi-node deployment
+# Routes traffic to the leader pod which runs the vLLM API server.
+# Workers are Ray workers and do not serve HTTP traffic directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-405b
+  namespace: inference
+  labels:
+    app: vllm-405b
+    app.kubernetes.io/name: vllm-405b
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+    model: llama-3-1-405b-instruct-fp8
+  annotations:
+    description: "OpenAI-compatible API endpoint for Llama 405B"
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-405b
+    role: head  # Only route to the leader pod
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,148 @@
+# Karpenter NodePool and EC2NodeClass for GPU inference on EKS
+# Provisions p5.48xlarge instances (8x H100 SXM 80GB per node) on demand.
+# Uses Karpenter v1 API for automatic GPU node lifecycle management.
+#
+# Instance selection:
+#   - p5.48xlarge: 8x H100 SXM, 192 vCPUs, 2048 GiB RAM, 8x EFA
+#   - EFA (Elastic Fabric Adapter) for NCCL cross-node communication
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-inference-nodepool
+    app.kubernetes.io/component: infrastructure
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  # Weight determines priority when multiple NodePools match
+  weight: 100
+
+  template:
+    metadata:
+      labels:
+        node-role: gpu-inference
+        karpenter.sh/nodepool: gpu-inference
+    spec:
+      # Taints ensure only GPU workloads land on these expensive nodes
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+
+      requirements:
+        # Instance family: p5 (H100 SXM)
+        - key: karpenter.k8s.aws/instance-family
+          operator: In
+          values: ["p5"]
+        # Specific instance type for deterministic scheduling
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["p5.48xlarge"]
+        # On-demand only (GPU spot is unreliable for long-running inference)
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        # Availability zones with GPU capacity
+        - key: topology.kubernetes.io/zone
+          operator: In
+          values:
+            - us-east-1a
+            - us-east-1b
+            - us-west-2a
+            - us-west-2b
+        # Architecture
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu-inference
+
+  # Limits: max 64 GPUs total (8 nodes x 8 GPUs each)
+  limits:
+    nvidia.com/gpu: "64"
+    cpu: "1536"       # 8 nodes x 192 vCPUs
+    memory: "16384Gi"  # 8 nodes x 2048 GiB
+
+  disruption:
+    # Consolidate empty nodes after 5 minutes
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 300s
+
+    # Budgets control how many nodes can be disrupted simultaneously
+    budgets:
+      - nodes: "1"        # Only disrupt 1 node at a time
+      - nodes: "0"         # No disruption during business hours (optional)
+        schedule: "0 9-17 * * mon-fri"
+        duration: 8h
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-inference-nodeclass
+    app.kubernetes.io/component: infrastructure
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  role: "KarpenterNodeRole-${CLUSTER_NAME}"
+
+  # AMI: Use EKS-optimized GPU AMI with NVIDIA drivers pre-installed
+  amiSelectorTerms:
+    - alias: al2023@latest
+      # EKS GPU AMI includes: NVIDIA driver, nvidia-container-toolkit,
+      # CUDA, NCCL, EFA driver, Fabric Manager
+
+  # Subnet selection: private subnets with EFA support
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${CLUSTER_NAME}"
+        network: private
+
+  # Security group selection
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${CLUSTER_NAME}"
+
+  # Instance store configuration for scratch space
+  instanceStorePolicy: RAID0
+
+  # Block device mappings
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 500Gi     # OS + container images + model cache
+        volumeType: gp3
+        iops: 10000
+        throughput: 750
+        encrypted: true
+        deleteOnTermination: true
+
+  # User data to configure GPU settings at boot
+  userData: |
+    #!/bin/bash
+    set -euo pipefail
+
+    # Enable persistence mode for GPUs (reduces cold-start latency)
+    nvidia-smi -pm 1
+
+    # Set GPU clock speeds to maximum for consistent performance
+    nvidia-smi --lock-gpu-clocks=1980,1980 || true
+
+    # Configure huge pages for NCCL performance
+    echo 8192 > /proc/sys/vm/nr_hugepages
+
+    # EFA configuration for multi-node NCCL
+    echo "net.core.rmem_max=8388608" >> /etc/sysctl.conf
+    echo "net.core.wmem_max=8388608" >> /etc/sysctl.conf
+    sysctl -p
+
+  # Tags applied to EC2 instances
+  tags:
+    team: ml-infrastructure
+    cost-center: gpu-inference
+    environment: production
+    managed-by: karpenter

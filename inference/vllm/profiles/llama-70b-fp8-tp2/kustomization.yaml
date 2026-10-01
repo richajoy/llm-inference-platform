@@ -1,0 +1,40 @@
+# Kustomize overlay: Llama 3.3 70B FP8 TP=2
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: inference
+
+resources:
+  - ../../base
+
+patches:
+  - path: deployment.yaml
+    target:
+      kind: Deployment
+      name: vllm
+  - target:
+      kind: Deployment
+      name: vllm
+    patch: |
+      - op: replace
+        path: /metadata/name
+        value: vllm-70b-fp8-tp2
+      - op: replace
+        path: /spec/selector/matchLabels/app
+        value: vllm-70b-fp8-tp2
+      - op: replace
+        path: /spec/template/metadata/labels/app
+        value: vllm-70b-fp8-tp2
+  - target:
+      kind: Service
+      name: vllm
+    patch: |
+      - op: replace
+        path: /metadata/name
+        value: vllm-70b-fp8-tp2
+      - op: replace
+        path: /spec/selector/app
+        value: vllm-70b-fp8-tp2
+
+commonLabels:
+  profile: llama-70b-fp8-tp2

@@ -1,0 +1,67 @@
+# Kustomize patch: Llama 3.3 70B FP8 with Tensor Parallelism = 2
+# Uses NVIDIA pre-quantized FP8 checkpoint for 2-GPU deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-70b-fp8-tp2
+  namespace: inference
+spec:
+  selector:
+    matchLabels:
+      app: vllm-70b-fp8-tp2
+  template:
+    metadata:
+      labels:
+        app: vllm-70b-fp8-tp2
+        model: llama-3-3-70b-instruct-fp8
+        profile: fp8-tp2
+    spec:
+      containers:
+        - name: vllm
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--model"
+            - "/models/nvidia--Llama-3.3-70B-Instruct-FP8"
+            - "--served-model-name"
+            - "nvidia/Llama-3.3-70B-Instruct-FP8"
+            - "--tensor-parallel-size"
+            - "2"
+            - "--gpu-memory-utilization"
+            - "0.95"
+            - "--max-model-len"
+            - "16384"
+            - "--kv-cache-dtype"
+            - "fp8"
+            - "--enable-prefix-caching"
+            - "--dtype"
+            - "auto"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 32Gi
+              nvidia.com/gpu: 2
+            limits:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: 2
+          volumeMounts:
+            - name: model-weights
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: model-weights
+          persistentVolumeClaim:
+            claimName: model-weights
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

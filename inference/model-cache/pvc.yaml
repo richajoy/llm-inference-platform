@@ -1,0 +1,21 @@
+# PersistentVolumeClaim for LLM model weights
+# Stores downloaded HuggingFace model files for all vLLM profiles
+# Size: 500Gi to accommodate multiple large models (8B, 70B, 70B-FP8, EAGLE3 draft)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-weights
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: model-weights
+    app.kubernetes.io/component: model-cache
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # Use local-path for RunPod (NVMe-backed), standard for GKE
+  # Override with: kubectl apply -f pvc.yaml --set storageClassName=standard
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 500Gi

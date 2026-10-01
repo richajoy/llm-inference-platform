@@ -1,0 +1,26 @@
+name: stress-test
+description: Find breaking point under extreme load
+config:
+  num_prompts: 5000
+  request_rate: 100
+  concurrent_users: 128
+  max_tokens: 256
+  dataset: sharegpt
+  warmup_prompts: 50
+  ramp_up_seconds: 60
+  ramp_stages:
+    - duration_seconds: 60
+      target_users: 32
+    - duration_seconds: 60
+      target_users: 64
+    - duration_seconds: 60
+      target_users: 128
+    - duration_seconds: 120
+      target_users: 128
+    - duration_seconds: 60
+      target_users: 0
+thresholds:
+  # Relaxed thresholds for stress testing - goal is to find limits
+  ttft_p99_ms: 30000
+  tpot_p99_ms: 500
+  error_rate_pct: 20

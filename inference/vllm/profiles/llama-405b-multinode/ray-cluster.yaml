@@ -1,0 +1,302 @@
+# RayCluster for multi-node vLLM serving (Llama 405B)
+#
+# This is the PRODUCTION approach for multi-node inference.
+# KubeRay manages the Ray cluster lifecycle, auto-recovery, and scaling.
+# vLLM connects to this Ray cluster for distributed TP/PP execution.
+#
+# Architecture:
+#   KubeRay Operator
+#   └── RayCluster "vllm-405b-ray"
+#        ├── Head pod (Ray GCS + Dashboard + vLLM API server)
+#        │   └── 8x H100 SXM (TP=8, PP stage 0)
+#        └── Worker group "gpu-workers"
+#            └── Worker pod
+#                └── 8x H100 SXM (TP=8, PP stage 1)
+#
+# vs LeaderWorkerSet approach:
+#   - RayCluster: K8s-native lifecycle, auto-recovery, Ray dashboard, autoscaler
+#   - LeaderWorkerSet: Simpler, no extra operator, but fragile bash orchestration
+#
+# Use RayCluster for PRODUCTION. Use LeaderWorkerSet for quick dev/testing.
+---
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: vllm-405b-ray
+  namespace: inference
+  labels:
+    app: vllm-405b
+    app.kubernetes.io/name: vllm-405b
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+    deployment-method: kuberay
+  annotations:
+    description: "Llama 3.1 405B FP8 via KubeRay - TP=8, PP=2, 2 nodes"
+spec:
+  # Ray version must match the version in the vLLM image
+  rayVersion: "2.41.0"
+
+  # ─────────────────────────────────────────────────────────
+  # Head node: runs Ray GCS, dashboard, and vLLM API server
+  # ─────────────────────────────────────────────────────────
+  headGroupSpec:
+    rayStartParams:
+      num-gpus: "8"
+      dashboard-host: "0.0.0.0"
+      block: "true"
+
+    template:
+      metadata:
+        labels:
+          app: vllm-405b
+          role: head
+          ray.io/node-type: head
+      spec:
+        terminationGracePeriodSeconds: 180
+        containers:
+          - name: ray-head
+            image: vllm/vllm-openai:v0.8.5
+            ports:
+              - name: gcs
+                containerPort: 6379
+                protocol: TCP
+              - name: dashboard
+                containerPort: 8265
+                protocol: TCP
+              - name: client
+                containerPort: 10001
+                protocol: TCP
+              - name: vllm-http
+                containerPort: 8000
+                protocol: TCP
+
+            # vLLM serve command runs AFTER Ray head is ready
+            # KubeRay handles ray start automatically via rayStartParams
+            lifecycle:
+              postStart:
+                exec:
+                  command:
+                    - /bin/bash
+                    - -c
+                    - |
+                      # Wait for all workers to join (16 GPUs total)
+                      echo "Waiting for Ray cluster to reach 16 GPUs..."
+                      for i in $(seq 1 120); do
+                        GPU_COUNT=$(python3 -c "import ray; ray.init(address='auto'); print(int(ray.cluster_resources().get('GPU', 0)))" 2>/dev/null || echo 0)
+                        if [ "$GPU_COUNT" -ge 16 ]; then
+                          echo "Ray cluster ready: ${GPU_COUNT} GPUs"
+                          # Start vLLM in background (Ray head also serves HTTP)
+                          nohup vllm serve meta-llama/Llama-3.1-405B-Instruct-FP8 \
+                            --tensor-parallel-size 8 \
+                            --pipeline-parallel-size 2 \
+                            --gpu-memory-utilization 0.95 \
+                            --max-model-len 8192 \
+                            --kv-cache-dtype fp8 \
+                            --enable-prefix-caching \
+                            --disable-log-requests \
+                            --port 8000 \
+                            > /tmp/vllm.log 2>&1 &
+                          exit 0
+                        fi
+                        sleep 10
+                      done
+                      echo "ERROR: Timed out waiting for 16 GPUs (got ${GPU_COUNT})"
+                      exit 1
+
+            resources:
+              requests:
+                cpu: "16"
+                memory: 200Gi
+                nvidia.com/gpu: 8
+              limits:
+                cpu: "32"
+                memory: 256Gi
+                nvidia.com/gpu: 8
+                nvidia.com/mlnxnics: 1  # InfiniBand NIC
+
+            env:
+              # NCCL InfiniBand tuning
+              - name: NCCL_IB_DISABLE
+                value: "0"
+              - name: NCCL_NET_GDR_LEVEL
+                value: "5"
+              - name: NCCL_IB_HCA
+                value: "mlx5"
+              - name: NCCL_SOCKET_NTHREADS
+                value: "8"
+              - name: NCCL_IB_QPS_PER_CONNECTION
+                value: "4"
+              - name: NCCL_IB_GID_INDEX
+                value: "3"
+              - name: NCCL_IB_TIMEOUT
+                value: "22"
+              - name: NCCL_IB_RETRY_CNT
+                value: "7"
+              - name: NCCL_DEBUG
+                value: "WARN"
+              # vLLM config
+              - name: VLLM_USE_V1
+                value: "1"
+              - name: VLLM_NO_USAGE_STATS
+                value: "1"
+              - name: RAY_DEDUP_LOGS
+                value: "1"
+              - name: HF_HOME
+                value: "/models/.cache"
+              - name: HF_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: hf-token
+                    key: token
+
+            volumeMounts:
+              - name: models
+                mountPath: /models
+              - name: shm
+                mountPath: /dev/shm
+
+            readinessProbe:
+              httpGet:
+                path: /health
+                port: vllm-http
+              initialDelaySeconds: 300
+              periodSeconds: 15
+              timeoutSeconds: 10
+              failureThreshold: 10
+
+            livenessProbe:
+              httpGet:
+                path: /health
+                port: vllm-http
+              initialDelaySeconds: 600
+              periodSeconds: 30
+              timeoutSeconds: 10
+              failureThreshold: 5
+
+        nodeSelector:
+          nvidia.com/gpu.product: "NVIDIA-H100-80GB-HBM3"
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+        volumes:
+          - name: models
+            persistentVolumeClaim:
+              claimName: model-weights
+          - name: shm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 32Gi
+
+  # ─────────────────────────────────────────────────────────
+  # Worker group: GPU workers for distributed inference
+  # ─────────────────────────────────────────────────────────
+  workerGroupSpecs:
+    - groupName: gpu-workers
+      replicas: 1          # 1 worker node (+ 1 head = 2 total)
+      minReplicas: 1
+      maxReplicas: 3       # Allow scaling up to 4 total nodes
+
+      rayStartParams:
+        num-gpus: "8"
+        block: "true"
+
+      template:
+        metadata:
+          labels:
+            app: vllm-405b
+            role: worker
+            ray.io/node-type: worker
+        spec:
+          terminationGracePeriodSeconds: 180
+          containers:
+            - name: ray-worker
+              image: vllm/vllm-openai:v0.8.5
+              # No command needed - KubeRay handles ray start
+              resources:
+                requests:
+                  cpu: "16"
+                  memory: 200Gi
+                  nvidia.com/gpu: 8
+                limits:
+                  cpu: "32"
+                  memory: 256Gi
+                  nvidia.com/gpu: 8
+                  nvidia.com/mlnxnics: 1
+
+              env:
+                # NCCL InfiniBand tuning (must match head)
+                - name: NCCL_IB_DISABLE
+                  value: "0"
+                - name: NCCL_NET_GDR_LEVEL
+                  value: "5"
+                - name: NCCL_IB_HCA
+                  value: "mlx5"
+                - name: NCCL_SOCKET_NTHREADS
+                  value: "8"
+                - name: NCCL_IB_QPS_PER_CONNECTION
+                  value: "4"
+                - name: NCCL_IB_GID_INDEX
+                  value: "3"
+                - name: NCCL_IB_TIMEOUT
+                  value: "22"
+                - name: NCCL_IB_RETRY_CNT
+                  value: "7"
+                - name: NCCL_DEBUG
+                  value: "WARN"
+                - name: VLLM_USE_V1
+                  value: "1"
+                - name: HF_HOME
+                  value: "/models/.cache"
+                - name: HF_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: hf-token
+                      key: token
+
+              volumeMounts:
+                - name: models
+                  mountPath: /models
+                - name: shm
+                  mountPath: /dev/shm
+
+          nodeSelector:
+            nvidia.com/gpu.product: "NVIDIA-H100-80GB-HBM3"
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+          volumes:
+            - name: models
+              persistentVolumeClaim:
+                claimName: model-weights
+            - name: shm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 32Gi
+
+---
+# Service exposing the vLLM API on the Ray head node
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-405b-ray
+  namespace: inference
+  labels:
+    app: vllm-405b
+    deployment-method: kuberay
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-405b
+    role: head
+    ray.io/node-type: head
+  ports:
+    - name: vllm-http
+      port: 8000
+      targetPort: vllm-http
+      protocol: TCP
+    - name: ray-dashboard
+      port: 8265
+      targetPort: dashboard
+      protocol: TCP

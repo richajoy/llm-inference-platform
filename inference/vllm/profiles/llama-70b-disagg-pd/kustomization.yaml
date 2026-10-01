@@ -1,0 +1,18 @@
+# Kustomize overlay: Llama 3.3 70B Disaggregated Prefill/Decode
+# This profile does NOT use the base overlay because it has three separate
+# deployments (prefill, decode, proxy) with their own services.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: inference
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: llm-inference
+  profile: llama-70b-disagg-pd
+
+resources:
+  - prefill-deployment.yaml
+  - decode-deployment.yaml
+  - proxy-deployment.yaml
+  - lmcache-config.yaml

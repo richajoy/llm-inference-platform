@@ -1,0 +1,67 @@
+# Kustomize patch: Llama 3.3 70B + EAGLE3 speculative decoding
+# Uses EAGLE3 draft model for 2-3x latency improvement on decode-bound workloads
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-70b-eagle3
+  namespace: inference
+spec:
+  selector:
+    matchLabels:
+      app: vllm-70b-eagle3
+  template:
+    metadata:
+      labels:
+        app: vllm-70b-eagle3
+        model: llama-3-3-70b-instruct
+        profile: eagle3
+    spec:
+      containers:
+        - name: vllm
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--model"
+            - "/models/meta-llama--Llama-3.3-70B-Instruct"
+            - "--served-model-name"
+            - "meta-llama/Llama-3.3-70B-Instruct"
+            - "--tensor-parallel-size"
+            - "4"
+            - "--speculative-config"
+            - '{"model":"/models/yuhuili--EAGLE3-LLaMA3.3-Instruct-70B","num_speculative_tokens":3,"method":"eagle3","draft_tensor_parallel_size":1}'
+            - "--gpu-memory-utilization"
+            - "0.90"
+            - "--max-model-len"
+            - "8192"
+            - "--enable-prefix-caching"
+            - "--dtype"
+            - "auto"
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: 4
+            limits:
+              cpu: "16"
+              memory: 128Gi
+              nvidia.com/gpu: 4
+          volumeMounts:
+            - name: model-weights
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: model-weights
+          persistentVolumeClaim:
+            claimName: model-weights
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi

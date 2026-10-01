@@ -1,0 +1,16 @@
+# Kustomization: Llama 405B multi-node deployment
+# This profile does NOT use the base overlay because LeaderWorkerSet
+# is a fundamentally different resource kind than Deployment.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: inference
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: llm-inference
+  profile: llama-405b-multinode
+
+resources:
+  - leader-worker-set.yaml
+  - service.yaml

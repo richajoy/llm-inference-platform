@@ -1,0 +1,98 @@
+# LLM Guard Scanner Configuration
+# Fast, lightweight scanners for real-time input/output validation
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-guard-config
+  namespace: enterprise
+  labels:
+    app.kubernetes.io/name: llm-guard
+    app.kubernetes.io/component: guardrails
+    app.kubernetes.io/part-of: safety-layer
+data:
+  scanners.yml: |
+    # ──────────────────────────────────────────────
+    # Input Scanners
+    # Applied to user prompts before LLM processing
+    # ──────────────────────────────────────────────
+    input_scanners:
+      # Detect prompt injection and jailbreak attempts
+      - PromptInjection:
+          threshold: 0.9
+          match_type: full
+
+      # Detect toxic, hateful, or abusive language
+      - Toxicity:
+          threshold: 0.7
+          match_type: sentence
+
+      # Find and hash secrets (API keys, passwords, tokens)
+      - Secrets:
+          redact_mode: hash
+
+      # Detect invisible unicode characters used for prompt injection
+      - InvisibleText: {}
+
+      # Block requests about prohibited topics
+      - BanTopics:
+          topics:
+            - violence
+            - illegal activities
+            - weapons manufacturing
+            - drug synthesis
+            - exploitation
+          threshold: 0.7
+
+      # Detect code injection attempts
+      - Code:
+          languages:
+            - python
+            - javascript
+            - bash
+          is_blocked: false
+
+      # Limit input token count
+      - TokenLimit:
+          limit: 4096
+          encoding_name: cl100k_base
+
+    # ──────────────────────────────────────────────
+    # Output Scanners
+    # Applied to LLM responses before returning to user
+    # ──────────────────────────────────────────────
+    output_scanners:
+      # Detect biased or stereotyping language
+      - Bias:
+          threshold: 0.7
+          match_type: sentence
+
+      # Detect malicious URLs in responses
+      - MaliciousURLs: {}
+
+      # Redact sensitive entities from responses
+      - Sensitive:
+          entity_types:
+            - CREDIT_CARD
+            - CRYPTO
+            - EMAIL_ADDRESS
+            - IBAN_CODE
+            - IP_ADDRESS
+            - PERSON
+            - PHONE_NUMBER
+            - US_SSN
+            - US_BANK_NUMBER
+          redact: true
+
+      # Detect toxic content in responses
+      - Toxicity:
+          threshold: 0.7
+          match_type: sentence
+
+      # Detect when model refuses to answer (for monitoring)
+      - NoRefusal:
+          match_type: full
+
+      # Check for relevance between input and output
+      - Relevance:
+          threshold: 0.5

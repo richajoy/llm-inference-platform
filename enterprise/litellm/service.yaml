@@ -1,0 +1,25 @@
+# LiteLLM Proxy Service
+# Exposes the API gateway on port 4000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: enterprise
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: litellm
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "4000"
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 4000
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/component: gateway

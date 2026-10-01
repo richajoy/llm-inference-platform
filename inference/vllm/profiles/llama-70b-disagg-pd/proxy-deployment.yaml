@@ -1,0 +1,162 @@
+# Disaggregated Prefill/Decode: Proxy that routes requests between P and D instances
+# Receives client requests, sends to prefill for KV generation, then to decode for generation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-70b-disagg-proxy
+  namespace: inference
+  labels:
+    app: vllm-70b-disagg-proxy
+    role: proxy
+    app.kubernetes.io/name: vllm-70b-disagg-proxy
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-70b-disagg-proxy
+      role: proxy
+  template:
+    metadata:
+      labels:
+        app: vllm-70b-disagg-proxy
+        role: proxy
+        profile: disagg-pd
+    spec:
+      containers:
+        - name: proxy
+          image: python:3.11-slim
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              pip install --quiet aiohttp uvicorn
+
+              cat > /tmp/proxy.py << 'PYEOF'
+              """
+              Disaggregated P/D proxy for vLLM.
+              Routes /v1/chat/completions and /v1/completions:
+                1. Forward prompt to prefill instance (KV production)
+                2. Forward generation request to decode instance (KV consumption)
+              For streaming, proxies SSE events from the decode instance.
+              """
+              import asyncio
+              import json
+              import os
+              from aiohttp import web, ClientSession
+
+              PREFILL_URL = os.environ.get("PREFILL_URL", "http://vllm-70b-prefill:8100")
+              DECODE_URL = os.environ.get("DECODE_URL", "http://vllm-70b-decode:8200")
+
+              async def health(request):
+                  return web.json_response({"status": "ok"})
+
+              async def proxy_models(request):
+                  """Proxy /v1/models to the decode instance."""
+                  async with ClientSession() as session:
+                      async with session.get(f"{DECODE_URL}/v1/models") as resp:
+                          body = await resp.json()
+                          return web.json_response(body, status=resp.status)
+
+              async def proxy_completions(request):
+                  """
+                  Route completions through prefill -> decode pipeline.
+                  1. Send full request to prefill (produces KV cache)
+                  2. Forward to decode (consumes KV, generates tokens)
+                  """
+                  body = await request.json()
+                  stream = body.get("stream", False)
+
+                  async with ClientSession() as session:
+                      # Step 1: Prefill - send prompt for KV production
+                      prefill_body = {**body, "max_tokens": 1, "stream": False}
+                      async with session.post(
+                          f"{PREFILL_URL}/v1/completions"
+                          if "prompt" in body
+                          else f"{PREFILL_URL}/v1/chat/completions",
+                          json=prefill_body,
+                      ) as prefill_resp:
+                          if prefill_resp.status != 200:
+                              err = await prefill_resp.text()
+                              return web.Response(status=prefill_resp.status, text=err)
+
+                      # Step 2: Decode - generate tokens using cached KV
+                      endpoint = (
+                          f"{DECODE_URL}/v1/completions"
+                          if "prompt" in body
+                          else f"{DECODE_URL}/v1/chat/completions"
+                      )
+                      async with session.post(endpoint, json=body) as decode_resp:
+                          if stream:
+                              response = web.StreamResponse(
+                                  status=decode_resp.status,
+                                  headers={"Content-Type": "text/event-stream"},
+                              )
+                              await response.prepare(request)
+                              async for chunk in decode_resp.content.iter_any():
+                                  await response.write(chunk)
+                              await response.write_eof()
+                              return response
+                          else:
+                              result = await decode_resp.json()
+                              return web.json_response(result, status=decode_resp.status)
+
+              app = web.Application()
+              app.router.add_get("/health", health)
+              app.router.add_get("/v1/models", proxy_models)
+              app.router.add_post("/v1/completions", proxy_completions)
+              app.router.add_post("/v1/chat/completions", proxy_completions)
+
+              if __name__ == "__main__":
+                  web.run_app(app, host="0.0.0.0", port=8000)
+              PYEOF
+
+              python /tmp/proxy.py
+          env:
+            - name: PREFILL_URL
+              value: "http://vllm-70b-prefill:8100"
+            - name: DECODE_URL
+              value: "http://vllm-70b-decode:8200"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-70b-disagg
+  namespace: inference
+  labels:
+    app: vllm-70b-disagg-proxy
+    role: proxy
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-70b-disagg-proxy
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

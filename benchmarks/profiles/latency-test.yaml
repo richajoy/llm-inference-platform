@@ -1,0 +1,15 @@
+name: latency-test
+description: Low concurrency, measure P99 latency
+config:
+  num_prompts: 100
+  request_rate: 1
+  concurrent_users: 1
+  max_tokens: 256
+  dataset: sharegpt
+  warmup_prompts: 10
+thresholds:
+  ttft_p50_ms: 1500
+  ttft_p99_ms: 3000
+  tpot_p50_ms: 40
+  tpot_p99_ms: 80
+  error_rate_pct: 1

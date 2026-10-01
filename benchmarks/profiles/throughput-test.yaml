@@ -1,0 +1,14 @@
+name: throughput-test
+description: High concurrency, measure tokens per second
+config:
+  num_prompts: 1000
+  request_rate: 50
+  concurrent_users: 64
+  max_tokens: 512
+  dataset: sharegpt
+  warmup_prompts: 20
+thresholds:
+  min_throughput_tps: 1000
+  ttft_p99_ms: 10000
+  tpot_p99_ms: 150
+  error_rate_pct: 5

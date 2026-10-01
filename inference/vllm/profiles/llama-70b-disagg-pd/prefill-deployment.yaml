@@ -1,0 +1,137 @@
+# Disaggregated Prefill/Decode: Prefill instance (kv_producer)
+# Handles prompt processing and produces KV cache for the decode instance
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-70b-prefill
+  namespace: inference
+  labels:
+    app: vllm-70b-prefill
+    role: prefill
+    app.kubernetes.io/name: vllm-70b-prefill
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-70b-prefill
+      role: prefill
+  template:
+    metadata:
+      labels:
+        app: vllm-70b-prefill
+        role: prefill
+        model: llama-3-3-70b-instruct
+        profile: disagg-pd
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.8.5
+          ports:
+            - name: http
+              containerPort: 8100
+              protocol: TCP
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8100"
+            - "--model"
+            - "/models/meta-llama--Llama-3.3-70B-Instruct"
+            - "--served-model-name"
+            - "meta-llama/Llama-3.3-70B-Instruct"
+            - "--tensor-parallel-size"
+            - "4"
+            - "--gpu-memory-utilization"
+            - "0.90"
+            - "--max-model-len"
+            - "8192"
+            - "--enable-prefix-caching"
+            - "--kv-transfer-config"
+            - '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_producer","kv_connector_extra_config":{"discard_partial_chunks":false}}'
+            - "--dtype"
+            - "auto"
+          env:
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0,1,2,3"
+            - name: LMCACHE_CONFIG_FILE
+              value: /etc/lmcache/lmcache-prefiller.yaml
+          envFrom:
+            - configMapRef:
+                name: vllm-base-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: 4
+            limits:
+              cpu: "16"
+              memory: 128Gi
+              nvidia.com/gpu: 4
+          volumeMounts:
+            - name: model-weights
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+            - name: lmcache-config
+              mountPath: /etc/lmcache
+              readOnly: true
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: model-weights
+          persistentVolumeClaim:
+            claimName: model-weights
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+        - name: lmcache-config
+          configMap:
+            name: lmcache-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-70b-prefill
+  namespace: inference
+  labels:
+    app: vllm-70b-prefill
+    role: prefill
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-70b-prefill
+  ports:
+    - name: http
+      port: 8100
+      targetPort: http
+      protocol: TCP

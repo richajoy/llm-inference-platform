@@ -1,0 +1,38 @@
+# GPU Operator overlay for MIG Mixed Strategy
+# Use: helm upgrade gpu-operator nvidia/gpu-operator -f values.yaml -f values-mig-mixed.yaml
+#
+# In "mixed" strategy, different MIG profiles can coexist on the same GPU.
+# Each MIG device is advertised as a separate resource type.
+# Example: nvidia.com/mig-1g.10gb, nvidia.com/mig-3g.40gb
+
+migManager:
+  enabled: true
+  config:
+    name: mig-parted-config
+    default: all-disabled
+  env:
+    - name: MIG_PARTED_SELECTED_CONFIG
+      value: ""
+    - name: WITH_REBOOT
+      value: "false"
+
+# Device Plugin advertises each MIG slice as its own resource type
+devicePlugin:
+  enabled: true
+  config:
+    name: device-plugin-config
+    default: mig-mixed
+  env:
+    - name: MIG_STRATEGY
+      value: mixed
+    - name: FAIL_ON_INIT_ERROR
+      value: "true"
+
+# GPU Feature Discovery labels nodes with per-MIG-slice capabilities
+gfd:
+  enabled: true
+  env:
+    - name: MIG_STRATEGY
+      value: mixed
+    - name: GFD_SLEEP_INTERVAL
+      value: "60s"

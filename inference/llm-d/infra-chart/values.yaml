@@ -1,0 +1,56 @@
+# llm-d Infrastructure Helm Chart Values
+# Installs the Gateway API Inference Extension CRDs and Endpoint Picker
+# Chart: https://github.com/kubernetes-sigs/gateway-api-inference-extension
+#
+# This chart provides:
+# - InferencePool CRD (pool of model-serving pods)
+# - InferenceModel CRD (logical model -> physical model mapping)
+# - Endpoint Picker Pod (EPP) for inference-aware routing
+
+# -- Endpoint Picker (EPP) configuration
+endpointPicker:
+  # Number of EPP replicas
+  replicas: 2
+  image:
+    repository: us-central1-docker.pkg.dev/k8s-staging-gateway-api-inference/gateway-api-inference-extension/epp
+    tag: "main"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # Log level for EPP
+  logLevel: info
+  # Metrics port for Prometheus scraping
+  metricsPort: 9090
+
+# -- Scheduling configuration
+scheduling:
+  # Algorithm: load-aware, round-robin, least-connections
+  algorithm: load-aware
+  # Metrics used for scheduling decisions
+  metrics:
+    - type: queue-depth
+      weight: 0.5
+    - type: kv-cache-utilization
+      weight: 0.3
+    - type: gpu-memory
+      weight: 0.2
+
+# -- ServiceMonitor for Prometheus integration
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+  interval: 15s
+
+# -- RBAC
+rbac:
+  create: true
+
+# -- Namespace for the inference extension components
+namespace: inference

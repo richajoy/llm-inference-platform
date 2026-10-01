@@ -1,0 +1,78 @@
+# InferenceModel CRDs: Map client-facing model names to backend vLLM deployments
+# These are the logical models exposed through the Gateway API
+
+# Llama 3.1 8B - lightweight, cost-efficient
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceModel
+metadata:
+  name: llama-3-1-8b-instruct
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: llama-3-1-8b-instruct
+    app.kubernetes.io/component: inference-model
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  modelName: "meta-llama/Llama-3.1-8B-Instruct"
+  criticality: Standard
+  poolRef:
+    name: vllm-pool
+  targetModels:
+    - name: "meta-llama/Llama-3.1-8B-Instruct"
+      weight: 100
+---
+# Llama 3.3 70B - primary production model
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceModel
+metadata:
+  name: llama-3-3-70b-instruct
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: llama-3-3-70b-instruct
+    app.kubernetes.io/component: inference-model
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  modelName: "meta-llama/Llama-3.3-70B-Instruct"
+  criticality: Critical
+  poolRef:
+    name: vllm-pool
+  targetModels:
+    - name: "meta-llama/Llama-3.3-70B-Instruct"
+      weight: 100
+---
+# Llama 3.3 70B FP8 - quantized variant
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceModel
+metadata:
+  name: llama-3-3-70b-instruct-fp8
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: llama-3-3-70b-instruct-fp8
+    app.kubernetes.io/component: inference-model
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  modelName: "nvidia/Llama-3.3-70B-Instruct-FP8"
+  criticality: Standard
+  poolRef:
+    name: vllm-pool
+  targetModels:
+    - name: "nvidia/Llama-3.3-70B-Instruct-FP8"
+      weight: 100
+---
+# Llama 3.2 1B - ultra-lightweight for testing and edge
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceModel
+metadata:
+  name: llama-3-2-1b-instruct
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: llama-3-2-1b-instruct
+    app.kubernetes.io/component: inference-model
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  modelName: "meta-llama/Llama-3.2-1B-Instruct"
+  criticality: Standard
+  poolRef:
+    name: vllm-pool
+  targetModels:
+    - name: "meta-llama/Llama-3.2-1B-Instruct"
+      weight: 100

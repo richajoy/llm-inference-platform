@@ -1,0 +1,18 @@
+# MIG Profile: all-3g-40gb
+# Creates 2x 3g.40gb MIG instances per H100 GPU (80GB)
+# Ideal for: Medium models (Llama 13B, Mixtral 8x7B single-expert)
+# Each slice: 3 GPCs, 40GB HBM3, ~48 GB/s memory bandwidth
+#
+# Apply by labeling nodes:
+#   kubectl label node <node> nvidia.com/mig.config=all-3g-40gb --overwrite
+#
+# H100 SXM5 80GB MIG capabilities:
+#   Max 2x 3g.40gb instances per GPU
+
+version: v1
+mig-configs:
+  all-3g-40gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "3g.40gb": 2

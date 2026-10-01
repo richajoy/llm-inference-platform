@@ -1,0 +1,47 @@
+###############################################################################
+# RunPod Terraform Variables Example
+#
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Default configuration: Single pod with 8x NVIDIA H100 SXM GPUs
+###############################################################################
+
+# Required: Your RunPod API key (get from https://www.runpod.io/console/user/settings)
+runpod_api_key = "your-runpod-api-key-here"
+
+# Pod configuration
+pod_count       = 1
+pod_name_prefix = "llm-k8s-node"
+
+# GPU configuration - 8x H100 SXM for full inference capability
+gpu_type  = "NVIDIA H100 SXM"
+gpu_count = 8
+
+# Container image - CUDA 12.4 with dev tools for k3s installation
+container_image = "nvidia/cuda:12.4.1-devel-ubuntu22.04"
+
+# Resource allocation
+min_vcpu_count = 32
+min_memory_gb  = 250
+
+# Storage - 500GB for model weights (Llama 405B requires ~200GB FP8)
+container_disk_size_gb = 100
+volume_size_gb         = 500
+network_volume_size_gb = 500
+
+# Networking
+cloud_type = "SECURE"
+start_ssh  = true
+
+# Optional: Preferred data center (leave empty for auto-selection)
+# data_center_id = "US-TX-3"
+
+# Optional: SSH public key for secure access
+# ssh_public_key = "ssh-rsa AAAA... user@host"
+
+# Optional: Additional environment variables
+# environment_variables = {
+#   "HF_TOKEN"   = "hf_your_huggingface_token"
+#   "CUDA_VISIBLE_DEVICES" = "all"
+# }

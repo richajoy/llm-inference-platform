@@ -1,0 +1,18 @@
+# MIG Profile: all-1g-10gb
+# Creates 7x 1g.10gb MIG instances per H100 GPU (80GB)
+# Ideal for: Small models (Llama 8B FP8, Mistral 7B FP8)
+# Each slice: 1 GPC, 10GB HBM3, ~16 GB/s memory bandwidth
+#
+# Apply by labeling nodes:
+#   kubectl label node <node> nvidia.com/mig.config=all-1g-10gb --overwrite
+#
+# H100 SXM5 80GB MIG capabilities:
+#   Max 7x 1g.10gb instances per GPU
+
+version: v1
+mig-configs:
+  all-1g-10gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "1g.10gb": 7

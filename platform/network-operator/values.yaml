@@ -1,0 +1,90 @@
+# NVIDIA Network Operator Helm values
+# Chart: nvidia/network-operator
+# Version: v24.7.0
+# Docs: https://docs.nvidia.com/networking/display/cokan10/network+operator
+#
+# Purpose: Manage InfiniBand, RDMA, SR-IOV, and GPUDirect networking
+# for multi-node tensor-parallel inference across H100 NVLink domains.
+
+# -- Operator settings
+operator:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# -- MOFED Driver (Mellanox OFED)
+ofedDriver:
+  enabled: true
+  image: mofed
+  repository: nvcr.io/nvidia/mellanox
+  version: "24.07-0.6.1.0"
+  startupProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 20
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+# -- RDMA Shared Device Plugin
+rdmaSharedDevicePlugin:
+  enabled: true
+  resources:
+    - name: rdma_shared_device_a
+      vendors: ["15b3"]
+      deviceIDs: ["101b", "101d"]
+      ifNames: ["ib0", "ib1"]
+
+# -- SR-IOV Device Plugin
+sriovDevicePlugin:
+  enabled: true
+  resources:
+    - name: sriov_rdma
+      vendors: ["15b3"]
+      deviceIDs: ["101b", "101d"]
+      drivers: ["mlx5_core"]
+      isRdma: true
+
+# -- Secondary Network (Multus + whereabouts IPAM)
+secondaryNetwork:
+  enabled: true
+  multus:
+    enabled: true
+    image: multus-cni
+    repository: ghcr.io/k8snetworkplumbingwg
+    version: v4.0.2
+  cniPlugins:
+    enabled: true
+  ipamPlugin:
+    enabled: true
+
+# -- IPoIB (IP over InfiniBand) CNI
+ipoib:
+  enabled: true
+
+# -- NV IPAM (NVIDIA IP Address Management)
+nvIpam:
+  enabled: true
+  enableWebhook: false
+
+# -- Node Feature Discovery
+deployCR: true
+nfd:
+  enabled: false  # Use NFD from GPU Operator instead
+
+# -- Pod tolerations for all daemonsets
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule

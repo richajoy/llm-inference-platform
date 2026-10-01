@@ -1,0 +1,230 @@
+# LeaderWorkerSet: Llama 3.1 405B multi-node deployment
+# Deploys across 2 nodes (16x H100 SXM) with TP=8 per node, PP=2 across nodes.
+# Requires InfiniBand (ConnectX-7) for NCCL cross-node communication.
+# Uses Ray for distributed process management across leader + worker.
+apiVersion: leaderworkerset.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: vllm-405b
+  namespace: inference
+  labels:
+    app: vllm-405b
+    app.kubernetes.io/name: vllm-405b
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+    model: llama-3-1-405b-instruct-fp8
+    profile: multinode-tp8-pp2
+  annotations:
+    description: "Llama 3.1 405B FP8 across 2 nodes with TP=8, PP=2"
+    gpu-requirement: "16x H100 SXM (2 nodes x 8 GPUs)"
+spec:
+  replicas: 1
+  leaderWorkerTemplate:
+    size: 2  # 1 leader + 1 worker = 2 nodes total
+    restartPolicy: RecreateGroupOnPodRestart
+    leaderTemplate:
+      metadata:
+        labels:
+          app: vllm-405b
+          role: head
+          app.kubernetes.io/name: vllm-405b
+          app.kubernetes.io/component: inference-engine
+          app.kubernetes.io/part-of: llm-inference
+      spec:
+        terminationGracePeriodSeconds: 180
+        containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.8.5
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+            - name: ray-gcs
+              containerPort: 6379
+              protocol: TCP
+          command: ["bash", "-c"]
+          args:
+            - |
+              ray start --head --port=6379 --num-gpus=8 \
+                --dashboard-host=0.0.0.0 \
+                --block &
+              # Wait for Ray cluster to be ready with both nodes
+              echo "Waiting for Ray worker to join..."
+              until [ $(ray status 2>/dev/null | grep -c "GPU") -ge 16 ] 2>/dev/null; do
+                sleep 5
+              done
+              echo "Ray cluster ready with 16 GPUs"
+              exec vllm serve meta-llama/Llama-3.1-405B-Instruct-FP8 \
+                --tensor-parallel-size 8 \
+                --pipeline-parallel-size 2 \
+                --gpu-memory-utilization 0.95 \
+                --max-model-len 8192 \
+                --kv-cache-dtype fp8 \
+                --enable-prefix-caching \
+                --disable-log-requests \
+                --port 8000
+          resources:
+            requests:
+              cpu: "16"
+              memory: 200Gi
+              nvidia.com/gpu: 8
+            limits:
+              cpu: "32"
+              memory: 256Gi
+              nvidia.com/gpu: 8
+              nvidia.com/mlnxnics: 1
+          env:
+            # --- NCCL InfiniBand tuning ---
+            - name: NCCL_IB_DISABLE
+              value: "0"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "5"
+            - name: NCCL_IB_HCA
+              value: "mlx5"
+            - name: NCCL_SOCKET_NTHREADS
+              value: "8"
+            - name: NCCL_IB_QPS_PER_CONNECTION
+              value: "4"
+            - name: NCCL_IB_GID_INDEX
+              value: "3"
+            - name: NCCL_IB_TC
+              value: "136"
+            - name: NCCL_IB_SL
+              value: "0"
+            - name: NCCL_IB_TIMEOUT
+              value: "22"
+            - name: NCCL_IB_RETRY_CNT
+              value: "7"
+            - name: NCCL_DEBUG
+              value: "WARN"
+            # --- vLLM / Ray config ---
+            - name: VLLM_USE_V1
+              value: "1"
+            - name: VLLM_NO_USAGE_STATS
+              value: "1"
+            - name: RAY_DEDUP_LOGS
+              value: "1"
+            - name: HF_HOME
+              value: "/models/.cache"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 80  # Allow up to 20 min for 405B model loading
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+        nodeSelector:
+          nvidia.com/gpu.product: "NVIDIA-H100-80GB-HBM3"
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+        volumes:
+          - name: models
+            persistentVolumeClaim:
+              claimName: model-weights
+          - name: shm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 32Gi
+    workerTemplate:
+      spec:
+        terminationGracePeriodSeconds: 180
+        containers:
+        - name: vllm-worker
+          image: vllm/vllm-openai:v0.8.5
+          command: ["bash", "-c"]
+          args:
+            - |
+              echo "Connecting to Ray head at $LWS_LEADER_ADDRESS:6379..."
+              ray start --address=$LWS_LEADER_ADDRESS:6379 --num-gpus=8 --block
+          resources:
+            requests:
+              cpu: "16"
+              memory: 200Gi
+              nvidia.com/gpu: 8
+            limits:
+              cpu: "32"
+              memory: 256Gi
+              nvidia.com/gpu: 8
+              nvidia.com/mlnxnics: 1
+          env:
+            # --- NCCL InfiniBand tuning (must match leader) ---
+            - name: NCCL_IB_DISABLE
+              value: "0"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "5"
+            - name: NCCL_IB_HCA
+              value: "mlx5"
+            - name: NCCL_SOCKET_NTHREADS
+              value: "8"
+            - name: NCCL_IB_QPS_PER_CONNECTION
+              value: "4"
+            - name: NCCL_IB_GID_INDEX
+              value: "3"
+            - name: NCCL_IB_TC
+              value: "136"
+            - name: NCCL_IB_SL
+              value: "0"
+            - name: NCCL_IB_TIMEOUT
+              value: "22"
+            - name: NCCL_IB_RETRY_CNT
+              value: "7"
+            - name: NCCL_DEBUG
+              value: "WARN"
+            # --- vLLM / Ray config ---
+            - name: VLLM_USE_V1
+              value: "1"
+            - name: HF_HOME
+              value: "/models/.cache"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+        nodeSelector:
+          nvidia.com/gpu.product: "NVIDIA-H100-80GB-HBM3"
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+        volumes:
+          - name: models
+            persistentVolumeClaim:
+              claimName: model-weights
+          - name: shm
+            emptyDir:
+              medium: Memory
+              sizeLimit: 32Gi

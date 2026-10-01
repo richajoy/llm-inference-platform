@@ -1,0 +1,81 @@
+# KEDA ScaledObject for Llama 3.1 8B on MIG slices
+#
+# MIG instances serve lightweight workloads with fast cold-start.
+# More aggressive scaling (higher thresholds, faster reactions)
+# because 8B models load in ~30s vs 2-5min for 70B.
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-8b-mig-keda
+  namespace: inference
+  labels:
+    app: vllm-8b-mig
+    app.kubernetes.io/component: autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-8b-mig
+
+  minReplicaCount: 1
+  maxReplicaCount: 7       # 7 MIG slices per H100 (1g.10gb × 7)
+  pollingInterval: 10       # Faster polling for lightweight model
+  cooldownPeriod: 120       # Shorter cooldown (fast cold-start)
+
+  fallback:
+    failureThreshold: 5
+    replicas: 1
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30   # Fast scale-up (model loads in ~30s)
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120
+
+  triggers:
+    # Queue depth — higher threshold since 8B handles more concurrent requests
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          sum(vllm:num_requests_waiting{namespace="inference",model_name=~".*8B.*"})
+        threshold: "20"
+        activationThreshold: "5"
+        metricName: vllm_8b_queue
+      metricType: AverageValue
+
+    # KV-cache usage — same threshold, MIG slices have less memory
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          avg(vllm:gpu_cache_usage_perc{namespace="inference",model_name=~".*8B.*"})
+        threshold: "0.85"
+        activationThreshold: "0.5"
+        metricName: vllm_8b_kv_cache
+      metricType: AverageValue
+
+    # P99 TTFT — lower threshold for 8B (users expect faster responses)
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:time_to_first_token_seconds_bucket{namespace="inference",model_name=~".*8B.*"}[2m]))
+            by (le)
+          )
+        threshold: "1"
+        activationThreshold: "0.2"
+        metricName: vllm_8b_ttft_p99
+      metricType: AverageValue

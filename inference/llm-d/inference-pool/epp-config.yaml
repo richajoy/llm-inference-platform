@@ -1,0 +1,146 @@
+# EPP (Endpoint Picker Plugin) scorer configuration
+# Controls how the EPP routes requests to vLLM backends.
+# Scorer weights must sum to 1.0.
+#
+# Scorers:
+#   PrefixCacheScorer (0.7): Routes requests to backends most likely to have
+#     a KV-cache hit for the request's prefix. Uses consistent hashing on
+#     the prefix token sequence.
+#   LeastLoadScorer (0.2): Prefers backends with lowest active request count,
+#     measured via vLLM /metrics endpoint (vllm:num_requests_running).
+#   LeastQueueScorer (0.1): Prefers backends with shortest pending queue,
+#     measured via vLLM /metrics endpoint (vllm:num_requests_waiting).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: epp-config
+  namespace: inference
+  labels:
+    app: vllm-epp
+    app.kubernetes.io/name: epp-config
+    app.kubernetes.io/component: inference-routing
+    app.kubernetes.io/part-of: llm-inference
+data:
+  config.yaml: |
+    scorers:
+      - type: PrefixCacheScorer
+        weight: 0.7
+      - type: LeastLoadScorer
+        weight: 0.2
+      - type: LeastQueueScorer
+        weight: 0.1
+
+    # How often EPP scrapes vLLM /metrics for load data
+    metricsRefreshInterval: 50ms
+
+    # Prefix hash configuration
+    prefixCache:
+      # Number of tokens to hash for prefix matching
+      hashBlockSize: 32
+      # Maximum prefix length to consider (tokens)
+      maxPrefixLength: 2048
+
+    # Health check configuration
+    healthCheck:
+      # Interval between backend health checks
+      interval: 5s
+      # Timeout for each health check
+      timeout: 2s
+      # Mark backend unhealthy after N consecutive failures
+      unhealthyThreshold: 3
+---
+# EPP Deployment
+# Runs as a standalone gRPC service that the Gateway calls for routing decisions.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-epp
+  namespace: inference
+  labels:
+    app: vllm-epp
+    app.kubernetes.io/name: vllm-epp
+    app.kubernetes.io/component: inference-routing
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm-epp
+  template:
+    metadata:
+      labels:
+        app: vllm-epp
+        app.kubernetes.io/name: vllm-epp
+        app.kubernetes.io/component: inference-routing
+    spec:
+      containers:
+        - name: epp
+          image: us-central1-docker.pkg.dev/k8s-staging-llm-d/gateway-api-inference-extension/epp:main
+          args:
+            - "--configPath=/config/config.yaml"
+            - "--grpcPort=9002"
+            - "--grpcHealthPort=9003"
+          ports:
+            - name: grpc
+              containerPort: 9002
+              protocol: TCP
+            - name: grpc-health
+              containerPort: 9003
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 512Mi
+          readinessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: epp-config
+---
+# EPP Service (referenced by InferencePool extensionRef)
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-epp
+  namespace: inference
+  labels:
+    app: vllm-epp
+    app.kubernetes.io/name: vllm-epp
+    app.kubernetes.io/component: inference-routing
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-epp
+  ports:
+    - name: grpc
+      port: 9002
+      targetPort: grpc
+      protocol: TCP
+    - name: grpc-health
+      port: 9003
+      targetPort: grpc-health
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

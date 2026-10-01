@@ -1,0 +1,90 @@
+# LiteLLM proxy configuration ConfigMap
+# Routes requests to vLLM backends with rate limiting, caching, and RBAC
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: enterprise
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: litellm
+data:
+  config.yaml: |
+    # ──────────────────────────────────────────────
+    # Model Routing
+    # ──────────────────────────────────────────────
+    model_list:
+      # Llama 3.1 8B - High throughput, lower latency
+      - model_name: llama-3.1-8b
+        litellm_params:
+          model: openai/meta-llama/Llama-3.1-8B-Instruct
+          api_base: http://vllm-8b-mig.inference.svc.cluster.local:8000/v1
+          rpm: 600
+          tpm: 500000
+
+      # Llama 3.3 70B - Full precision, highest quality
+      - model_name: llama-3.3-70b
+        litellm_params:
+          model: openai/meta-llama/Llama-3.3-70B-Instruct
+          api_base: http://vllm-70b-tp4.inference.svc.cluster.local:8000/v1
+          rpm: 120
+          tpm: 200000
+
+      # Llama 3.3 70B FP8 - Quantized, 2x throughput vs full precision
+      - model_name: llama-3.3-70b-fp8
+        litellm_params:
+          model: openai/nvidia/Llama-3.3-70B-Instruct-FP8
+          api_base: http://vllm-70b-fp8-tp2.inference.svc.cluster.local:8000/v1
+          rpm: 120
+          tpm: 200000
+
+    # ──────────────────────────────────────────────
+    # General Settings
+    # ──────────────────────────────────────────────
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+      database_url: os.environ/LITELLM_DATABASE_URL
+      alerting:
+        - slack
+      alert_types:
+        - llm_exceptions
+        - llm_requests_hanging
+        - budget_alerts
+
+    # ──────────────────────────────────────────────
+    # LiteLLM Behavior Settings
+    # ──────────────────────────────────────────────
+    litellm_settings:
+      # Caching via Redis
+      cache: true
+      cache_params:
+        type: redis
+        host: redis.enterprise.svc.cluster.local
+        port: 6379
+        ttl: 3600
+
+      # Prometheus metrics export
+      success_callback: ["prometheus"]
+      service_callback: ["prometheus"]
+
+      # Request timeout defaults (seconds)
+      request_timeout: 600
+      stream_timeout: 600
+
+      # Drop unmapped params instead of erroring
+      drop_params: true
+
+      # Retry failed requests
+      num_retries: 2
+      retry_after: 5
+
+    # ──────────────────────────────────────────────
+    # Router Settings
+    # ──────────────────────────────────────────────
+    router_settings:
+      routing_strategy: least-busy
+      num_retries: 2
+      timeout: 600
+      retry_after: 5

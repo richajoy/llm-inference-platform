@@ -1,0 +1,54 @@
+# NeMo Guardrails Configuration
+# Uses local vLLM backend as the guardrail evaluation model
+
+models:
+  - type: main
+    engine: openai
+    model: meta-llama/Llama-3.3-70B-Instruct
+    parameters:
+      base_url: http://vllm-70b-tp4.inference.svc.cluster.local:8000/v1
+      api_key: not-needed-for-local-vllm
+
+# ──────────────────────────────────────────────
+# Rails Configuration
+# ──────────────────────────────────────────────
+rails:
+  input:
+    flows:
+      - check jailbreak
+      - check input toxicity
+      - mask pii
+  output:
+    flows:
+      - check output toxicity
+      - check factual consistency
+
+# ──────────────────────────────────────────────
+# System Instructions
+# ──────────────────────────────────────────────
+instructions:
+  - type: general
+    content: |
+      You are a helpful AI assistant deployed in an enterprise environment.
+      You must refuse to discuss harmful, illegal, or dangerous topics.
+      You must not generate content that is toxic, biased, or discriminatory.
+      You must protect personally identifiable information (PII).
+      If you are unsure about the safety of a response, err on the side of caution.
+
+# ──────────────────────────────────────────────
+# Sample Conversation
+# ──────────────────────────────────────────────
+sample_conversation: |
+  user "Hello"
+    express greeting
+  bot express greeting
+    "Hello! How can I assist you today?"
+  user "Can you help me with a work question?"
+    ask work question
+  bot respond to work question
+    "Of course! I'd be happy to help with your work question. What do you need?"
+
+# ──────────────────────────────────────────────
+# Prompts Configuration
+# ──────────────────────────────────────────────
+prompts_path: prompts.yml

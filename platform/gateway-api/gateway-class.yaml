@@ -1,0 +1,45 @@
+# GatewayClass defines Envoy Gateway as the controller implementation.
+# This is the cluster-wide class definition that Gateway resources reference.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy-gateway
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  description: "Envoy Gateway controller for LLM inference traffic routing"
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: envoy-proxy-config
+    namespace: gateway
+---
+# EnvoyProxy configuration for performance tuning
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: envoy-proxy-config
+  namespace: gateway
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 2
+        container:
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 512Mi
+  bootstrap:
+    type: Merge
+    value: |
+      overload_manager:
+        refresh_interval: 0.25s
+        resource_monitors:
+        - name: "envoy.resource_monitors.global_downstream_max_connections"
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+            max_active_downstream_connections: 50000

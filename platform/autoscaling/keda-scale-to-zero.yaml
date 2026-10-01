@@ -1,0 +1,92 @@
+# =============================================================================
+# KEDA Scale-to-Zero Pattern for Cost-Optimized LLM Inference
+# =============================================================================
+#
+# This ScaledObject demonstrates scale-to-zero for non-critical or
+# dev/staging workloads where cold-start latency (2-5 min for model loading)
+# is acceptable in exchange for significant cost savings.
+#
+# KEY CONCEPT: Uses a keepalive trigger to prevent premature scale-to-zero.
+# The keepalive checks if ANY traffic exists (even 1 req/min) and maintains
+# at least 1 replica while traffic is flowing. True zero only happens
+# when traffic completely stops for the cooldown period.
+#
+# WARNING: Do NOT use scale-to-zero for production latency-sensitive workloads.
+# Model loading takes 2-5 minutes for 70B models. Use minReplicaCount: 1 instead.
+#
+# Use cases:
+#   - Dev/staging environments
+#   - Batch processing workloads
+#   - Off-hours cost optimization (pair with cron triggers)
+# =============================================================================
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-70b-scale-to-zero
+  namespace: inference
+  labels:
+    app: vllm-70b-tp4
+    app.kubernetes.io/component: autoscaler
+    scaling-pattern: scale-to-zero
+  annotations:
+    description: "Scale-to-zero pattern for dev/staging environments"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-70b-tp4
+
+  minReplicaCount: 0         # Allow scaling to zero
+  maxReplicaCount: 4
+  idleReplicaCount: 0        # Scale to 0 when all triggers report 0
+  pollingInterval: 30        # Less frequent polling (cost optimization)
+  cooldownPeriod: 600        # 10 min cooldown before scaling to zero
+
+  fallback:
+    failureThreshold: 3
+    replicas: 1               # Keep 1 replica if metrics fail
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0    # Immediate scale from 0→1
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 600  # Long stabilization before zero
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 300
+
+  triggers:
+    # ── Keepalive trigger: prevents scale-to-zero while traffic exists ─────
+    # Returns 1 if any incoming requests in the last minute, 0 otherwise.
+    # activationThreshold=0 means even 1 request keeps the deployment alive.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          clamp_max(
+            sum(rate(vllm:num_requests_total{namespace="inference"}[1m])) > bool 0,
+            1
+          )
+        threshold: "1"
+        activationThreshold: "0"
+        metricName: vllm_keepalive
+      metricType: AverageValue
+
+    # ── Queue depth: scale up when requests start queueing ────────────────
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          sum(vllm:num_requests_waiting{namespace="inference"})
+        threshold: "5"
+        activationThreshold: "0"    # Any waiting request triggers scale from 0
+        metricName: vllm_s2z_queue
+      metricType: AverageValue

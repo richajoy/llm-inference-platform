@@ -1,0 +1,91 @@
+# KEDA ScaledObject for Llama 3.3 70B FP8 on TP=2
+#
+# FP8 quantization halves memory footprint → runs on just 2 GPUs.
+# Cost-optimized profile: fewer GPUs per replica means more replicas
+# can fit on the same cluster. Scale more aggressively for throughput.
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-70b-fp8-tp2-keda
+  namespace: inference
+  labels:
+    app: vllm-70b-fp8-tp2
+    app.kubernetes.io/component: autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-70b-fp8-tp2
+
+  minReplicaCount: 1
+  maxReplicaCount: 4       # 4 replicas × 2 GPUs = 8 GPUs (1 node)
+  pollingInterval: 15
+  cooldownPeriod: 300
+
+  fallback:
+    failureThreshold: 5
+    replicas: 1
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 120
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 300
+
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:time_to_first_token_seconds_bucket{namespace="inference",model_name=~".*70B.*FP8.*"}[5m]))
+            by (le)
+          )
+        threshold: "2"
+        activationThreshold: "0.5"
+        metricName: vllm_fp8_ttft_p99
+      metricType: AverageValue
+
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:time_per_output_token_seconds_bucket{namespace="inference",model_name=~".*70B.*FP8.*"}[5m]))
+            by (le)
+          )
+        threshold: "0.08"
+        activationThreshold: "0.02"
+        metricName: vllm_fp8_itl_p99
+      metricType: AverageValue
+
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          sum(vllm:num_requests_waiting{namespace="inference",model_name=~".*70B.*FP8.*"})
+        threshold: "10"
+        activationThreshold: "2"
+        metricName: vllm_fp8_queue
+      metricType: AverageValue
+
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          avg(vllm:gpu_cache_usage_perc{namespace="inference",model_name=~".*70B.*FP8.*"})
+        threshold: "0.85"
+        activationThreshold: "0.5"
+        metricName: vllm_fp8_kv_cache
+      metricType: AverageValue

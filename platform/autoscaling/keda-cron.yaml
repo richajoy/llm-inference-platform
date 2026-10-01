@@ -1,0 +1,96 @@
+# =============================================================================
+# KEDA Cron-Based Scaling for Predictable Traffic Patterns
+# =============================================================================
+#
+# Combines time-based scaling (cron) with metric-based scaling (Prometheus).
+# The cron trigger sets a MINIMUM replica floor during peak hours,
+# while Prometheus triggers handle dynamic scaling above that floor.
+#
+# This is ideal for workloads with predictable daily patterns:
+#   - Business hours (9am-6pm): pre-warm with 3+ replicas
+#   - Off-hours: scale down to 1 replica (or 0 with scale-to-zero)
+#   - Weekends: minimal capacity
+#
+# The cron trigger ensures replicas are warm BEFORE traffic arrives,
+# eliminating cold-start latency during the morning ramp-up.
+# =============================================================================
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-70b-cron-keda
+  namespace: inference
+  labels:
+    app: vllm-70b-tp4
+    app.kubernetes.io/component: autoscaler
+    scaling-pattern: cron-hybrid
+  annotations:
+    description: "Hybrid cron + metric scaling for predictable traffic"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm-70b-tp4
+
+  minReplicaCount: 1
+  maxReplicaCount: 8
+  pollingInterval: 30
+  cooldownPeriod: 300
+
+  fallback:
+    failureThreshold: 5
+    replicas: 2
+
+  triggers:
+    # ── Business Hours: Mon-Fri 8am-7pm UTC ────────────────────────────────
+    # Pre-warm 3 replicas before traffic arrives.
+    # desiredReplicas sets the MINIMUM during this window.
+    - type: cron
+      metadata:
+        timezone: "UTC"
+        start: "0 8 * * 1-5"       # 8:00 AM UTC, Monday-Friday
+        end: "0 19 * * 1-5"        # 7:00 PM UTC, Monday-Friday
+        desiredReplicas: "3"
+
+    # ── Evening Hours: Mon-Fri 7pm-11pm UTC ────────────────────────────────
+    # Reduced but not minimal capacity.
+    - type: cron
+      metadata:
+        timezone: "UTC"
+        start: "0 19 * * 1-5"      # 7:00 PM UTC, Monday-Friday
+        end: "0 23 * * 1-5"        # 11:00 PM UTC, Monday-Friday
+        desiredReplicas: "2"
+
+    # ── Weekends: Sat-Sun all day ──────────────────────────────────────────
+    # Minimal capacity — most enterprise traffic is weekday.
+    - type: cron
+      metadata:
+        timezone: "UTC"
+        start: "0 0 * * 0,6"       # Midnight Saturday and Sunday
+        end: "59 23 * * 0,6"       # End of day Saturday and Sunday
+        desiredReplicas: "1"
+
+    # ── Metric-based: scales ABOVE cron floor when needed ──────────────────
+    # These triggers add capacity beyond what cron sets.
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          sum(vllm:num_requests_waiting{namespace="inference"})
+        threshold: "10"
+        activationThreshold: "3"
+        metricName: vllm_cron_queue
+      metricType: AverageValue
+
+    - type: prometheus
+      metadata:
+        serverAddress: http://kube-prometheus-stack-prometheus.monitoring:9090
+        query: |
+          histogram_quantile(0.99,
+            sum(rate(vllm:time_to_first_token_seconds_bucket{namespace="inference"}[5m]))
+            by (le)
+          )
+        threshold: "3"
+        activationThreshold: "1"
+        metricName: vllm_cron_ttft_p99
+      metricType: AverageValue

@@ -1,0 +1,47 @@
+# SriovNetworkNodePolicy for InfiniBand Virtual Functions
+# Creates SR-IOV VFs on InfiniBand NICs for direct pod assignment.
+# Each vLLM pod gets a dedicated VF for GPUDirect RDMA communication.
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetworkNodePolicy
+metadata:
+  name: ib-sriov-policy
+  namespace: gpu-operator
+spec:
+  # Resource name advertised to kubelet
+  resourceName: ibSriovVf
+  # Node selector for nodes with InfiniBand NICs
+  nodeSelector:
+    feature.node.kubernetes.io/network-sriov.capable: "true"
+  # Number of VFs to create per PF
+  numVfs: 8
+  # NIC selector
+  nicSelector:
+    vendor: "15b3"
+    deviceID: "101b"
+    pfNames:
+      - "ib0"
+      - "ib1"
+  # Device type
+  deviceType: netdevice
+  # Enable RDMA on VFs
+  isRdma: true
+  # Link type (InfiniBand)
+  linkType: ib
+---
+# SriovNetwork for inference namespace
+# Pods in inference namespace can request: nvidia.com/ibSriovVf
+apiVersion: sriovnetwork.openshift.io/v1
+kind: SriovNetwork
+metadata:
+  name: ib-sriov-network
+  namespace: gpu-operator
+spec:
+  resourceName: ibSriovVf
+  networkNamespace: inference
+  ipam: |
+    {
+      "type": "whereabouts",
+      "range": "10.56.218.0/24",
+      "exclude": ["10.56.218.0/32"]
+    }
+  linkState: auto

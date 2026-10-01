@@ -1,0 +1,79 @@
+# Kubernetes Job to download model weights from HuggingFace Hub
+# Downloads all models required by the vLLM profiles to the shared PVC
+# Models: Llama-3.1-8B, Llama-3.3-70B, Llama-3.3-70B-FP8, EAGLE3-70B draft, Llama-3.2-1B
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-download
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: model-download
+    app.kubernetes.io/component: model-cache
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400  # Clean up after 24h
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: model-download
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: downloader
+          image: python:3.11-slim
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              pip install --quiet huggingface-hub[hf_transfer]
+              export HF_HUB_ENABLE_HF_TRANSFER=1
+
+              MODELS=(
+                "meta-llama/Llama-3.1-8B-Instruct"
+                "meta-llama/Llama-3.3-70B-Instruct"
+                "nvidia/Llama-3.3-70B-Instruct-FP8"
+                "yuhuili/EAGLE3-LLaMA3.3-Instruct-70B"
+                "meta-llama/Llama-3.2-1B-Instruct"
+              )
+
+              for MODEL in "${MODELS[@]}"; do
+                MODEL_DIR="/models/$(echo $MODEL | tr '/' '--')"
+                if [ -d "$MODEL_DIR" ] && [ -f "$MODEL_DIR/config.json" ]; then
+                  echo "==> Skipping $MODEL (already downloaded)"
+                  continue
+                fi
+                echo "==> Downloading $MODEL to $MODEL_DIR ..."
+                huggingface-cli download "$MODEL" \
+                  --local-dir "$MODEL_DIR" \
+                  --local-dir-use-symlinks False \
+                  --resume-download
+                echo "==> Completed $MODEL"
+              done
+
+              echo "==> All models downloaded successfully"
+              ls -la /models/
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            - name: HF_HOME
+              value: /models/.cache
+          volumeMounts:
+            - name: model-weights
+              mountPath: /models
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "4"
+              memory: 16Gi
+      volumes:
+        - name: model-weights
+          persistentVolumeClaim:
+            claimName: model-weights

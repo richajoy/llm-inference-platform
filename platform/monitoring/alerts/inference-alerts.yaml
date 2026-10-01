@@ -1,0 +1,147 @@
+# PrometheusRule: Inference SLA alerts
+# Monitors vLLM inference performance against SLO thresholds
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: inference-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    app: kube-prometheus-stack
+spec:
+  groups:
+    - name: inference.latency
+      rules:
+        # TTFT P99 exceeds SLO
+        - alert: TTFTSLOBreach
+          expr: histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le, model_name)) > 5
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "TTFT P99 > 5s for model {{ $labels.model_name }}"
+            description: "Time to First Token P99 is {{ $value | humanize }}s (SLO: 5s). Users are experiencing slow initial response. Check KV-cache usage and queue depth."
+
+        # TTFT P99 approaching SLO
+        - alert: TTFTSLOWarning
+          expr: histogram_quantile(0.99, sum(rate(vllm:time_to_first_token_seconds_bucket[5m])) by (le, model_name)) > 3
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TTFT P99 > 3s for model {{ $labels.model_name }}"
+            description: "Time to First Token P99 is {{ $value | humanize }}s. Approaching SLO threshold of 5s."
+
+    - name: inference.kvcache
+      rules:
+        # KV-cache nearly full
+        - alert: KVCacheCritical
+          expr: vllm:gpu_cache_usage_perc > 0.95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "KV-cache > 95% for model {{ $labels.model_name }}"
+            description: "KV-cache usage is {{ $value | humanizePercentage }}. Preemptions and request rejections are likely. Scale up replicas or reduce max_model_len."
+
+        # KV-cache high
+        - alert: KVCacheHigh
+          expr: vllm:gpu_cache_usage_perc > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "KV-cache > 85% for model {{ $labels.model_name }}"
+            description: "KV-cache usage is {{ $value | humanizePercentage }}. Consider scaling before it reaches critical levels."
+
+    - name: inference.preemptions
+      rules:
+        # High preemption rate
+        - alert: PreemptionRateHigh
+          expr: sum(rate(vllm:num_preemptions_total[5m])) by (model_name) * 60 > 100
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Preemption rate > 100/min for model {{ $labels.model_name }}"
+            description: "vLLM is preempting {{ $value | humanize }}/min requests. This causes request retries and increased latency. Increase replicas or GPU memory."
+
+        # Moderate preemption rate
+        - alert: PreemptionRateWarning
+          expr: sum(rate(vllm:num_preemptions_total[5m])) by (model_name) * 60 > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Preemption rate > 10/min for model {{ $labels.model_name }}"
+            description: "vLLM preemption rate is {{ $value | humanize }}/min. Monitor for degradation."
+
+    - name: inference.queue
+      rules:
+        # Request queue too deep
+        - alert: RequestQueueDeep
+          expr: vllm:num_requests_waiting > 50
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Request queue > 50 for model {{ $labels.model_name }}"
+            description: "{{ $value }} requests are waiting in queue. Scale up inference replicas."
+
+        # Request queue building up
+        - alert: RequestQueueWarning
+          expr: vllm:num_requests_waiting > 20
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Request queue > 20 for model {{ $labels.model_name }}"
+            description: "{{ $value }} requests are waiting in queue. Consider scaling up."
+
+    - name: inference.errors
+      rules:
+        # High error rate
+        - alert: InferenceErrorRateHigh
+          expr: >
+            sum(rate(vllm:request_success_total{status="error"}[5m])) by (model_name)
+            / sum(rate(vllm:request_success_total[5m])) by (model_name) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Error rate > 5% for model {{ $labels.model_name }}"
+            description: "{{ $value | humanizePercentage }} of requests are failing. Check vLLM logs for OOM or other errors."
+
+        # vLLM pod not ready
+        - alert: VLLMPodNotReady
+          expr: kube_deployment_status_replicas_available{namespace="inference", deployment=~"vllm-.*"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No available vLLM replicas for {{ $labels.deployment }}"
+            description: "Deployment {{ $labels.deployment }} has 0 available replicas. Inference is down."
+
+    - name: inference.litellm
+      rules:
+        # LiteLLM high error rate
+        - alert: LiteLLMErrorRateHigh
+          expr: >
+            sum(rate(litellm_request_total{status_code=~"5.."}[5m]))
+            / sum(rate(litellm_request_total[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LiteLLM 5xx error rate > 5%"
+            description: "{{ $value | humanizePercentage }} of gateway requests are returning 5xx errors."
+
+        # LiteLLM rate limiting too many requests
+        - alert: LiteLLMRateLimitExcessive
+          expr: sum(rate(litellm_request_total{status_code="429"}[5m])) * 60 > 100
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "LiteLLM rate limiting > 100/min"
+            description: "{{ $value | humanize }}/min requests are being rate-limited. Review team quotas."

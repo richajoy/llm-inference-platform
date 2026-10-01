@@ -1,0 +1,148 @@
+# VariantAutoscaler: Independent prefill/decode scaling
+# Implements disaggregated serving autoscaling where prefill and decode
+# phases have separate scaling policies based on their distinct bottlenecks:
+#   - Prefill is compute-bound: scale on TTFT latency and queue depth
+#   - Decode is memory-bound: scale on per-token latency and KV-cache usage
+#
+# Uses llm-d InferenceModel CRD to define scaling variants.
+apiVersion: autoscaling.x-k8s.io/v1alpha1
+kind: VariantAutoscaler
+metadata:
+  name: vllm-autoscaler
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: vllm-autoscaler
+    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/part-of: llm-inference
+  annotations:
+    description: "Independent prefill/decode autoscaling for disaggregated vLLM"
+spec:
+  # Reference the InferencePool this autoscaler manages
+  targetRef:
+    apiGroup: inference.networking.x-k8s.io
+    kind: InferencePool
+    name: vllm-pool
+
+  # Model loading strategy: use histogram estimation to predict
+  # resource requirements for newly loaded models
+  loadModel:
+    strategy: histogramEstimation
+    histogramEstimation:
+      # How many recent load events to consider
+      sampleWindow: 10
+      # Percentile to use for resource estimation
+      percentile: 95
+
+  # Variant-specific scaling policies
+  variants:
+    # --- Prefill variant ---
+    # Handles prompt processing (compute-bound, latency-sensitive)
+    - name: prefill
+      selector:
+        matchLabels:
+          vllm-role: prefill
+      metrics:
+        - type: Object
+          object:
+            metric:
+              name: ttft_p99
+              selector:
+                matchLabels:
+                  app: vllm
+            describedObject:
+              apiVersion: v1
+              kind: Service
+              name: vllm-pool
+            target:
+              type: Value
+              value: "500m"  # 500ms P99 TTFT target
+        - type: Object
+          object:
+            metric:
+              name: queue_depth
+              selector:
+                matchLabels:
+                  app: vllm
+            describedObject:
+              apiVersion: v1
+              kind: Service
+              name: vllm-pool
+            target:
+              type: AverageValue
+              averageValue: "5"  # Scale up when avg queue > 5
+      scaling:
+        minReplicas: 1
+        maxReplicas: 8
+        scaleUp:
+          stabilizationWindowSeconds: 60
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 120
+            - type: Percent
+              value: 50
+              periodSeconds: 120
+          selectPolicy: Max
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 300
+          selectPolicy: Min
+
+    # --- Decode variant ---
+    # Handles token generation (memory-bound, throughput-sensitive)
+    - name: decode
+      selector:
+        matchLabels:
+          vllm-role: decode
+      metrics:
+        - type: Object
+          object:
+            metric:
+              name: tpot_p99
+              selector:
+                matchLabels:
+                  app: vllm
+            describedObject:
+              apiVersion: v1
+              kind: Service
+              name: vllm-pool
+            target:
+              type: Value
+              value: "50m"  # 50ms P99 TPOT target
+        - type: Object
+          object:
+            metric:
+              name: kv_cache_usage
+              selector:
+                matchLabels:
+                  app: vllm
+            describedObject:
+              apiVersion: v1
+              kind: Service
+              name: vllm-pool
+            target:
+              type: Value
+              value: "80"  # Scale up when KV-cache > 80% utilized
+      scaling:
+        minReplicas: 1
+        maxReplicas: 16
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 60
+            - type: Percent
+              value: 100
+              periodSeconds: 60
+          selectPolicy: Max
+        scaleDown:
+          stabilizationWindowSeconds: 600
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 300
+          selectPolicy: Min

@@ -1,0 +1,119 @@
+# PrometheusRule: GPU alerts
+# Monitors GPU health, utilization, and hardware errors
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+    app: kube-prometheus-stack
+spec:
+  groups:
+    - name: gpu.health
+      rules:
+        # GPU temperature exceeds safe operating limit
+        - alert: GPUTemperatureCritical
+          expr: DCGM_FI_DEV_GPU_TEMP > 85
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU temperature critical on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU temperature is {{ $value }}C (threshold: 85C) for more than 5 minutes. Risk of thermal throttling or hardware damage."
+            runbook_url: "https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes/index.html#thermal-management"
+
+        # GPU temperature approaching thermal throttle
+        - alert: GPUTemperatureWarning
+          expr: DCGM_FI_DEV_GPU_TEMP > 75
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU temperature elevated on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU temperature is {{ $value }}C (threshold: 75C). Monitor for potential throttling."
+
+        # GPU underutilized - possible waste
+        - alert: GPUUnderutilized
+          expr: DCGM_FI_DEV_GPU_UTIL < 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU underutilized on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU utilization is {{ $value }}% for more than 10 minutes. Consider consolidating workloads or scaling down."
+
+        # GPU memory nearly full
+        - alert: GPUMemoryExhausted
+          expr: (DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)) * 100 > 95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU memory > 95% on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU memory usage is {{ $value | humanize }}%. OOM kills are imminent. Consider reducing batch size or max_model_len."
+
+        # GPU memory high usage warning
+        - alert: GPUMemoryHigh
+          expr: (DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)) * 100 > 85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU memory > 85% on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU memory usage is {{ $value | humanize }}%. Approaching limit."
+
+        # XID errors indicate hardware problems
+        - alert: GPUXidErrors
+          expr: increase(DCGM_FI_DEV_XID_ERRORS[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU XID errors detected on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "{{ $value }} XID error(s) detected in the last 5 minutes. This indicates a GPU hardware or driver issue. Check dmesg and nvidia-smi for details."
+            runbook_url: "https://docs.nvidia.com/deploy/xid-errors/index.html"
+
+    - name: gpu.performance
+      rules:
+        # Power throttling detected
+        - alert: GPUPowerThrottling
+          expr: DCGM_FI_DEV_POWER_VIOLATION > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU power throttling on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU is being throttled due to power limits for {{ $value }}us. Check power supply and TDP configuration."
+
+        # Thermal throttling detected
+        - alert: GPUThermalThrottling
+          expr: DCGM_FI_DEV_THERMAL_VIOLATION > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU thermal throttling on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "GPU is being thermally throttled for {{ $value }}us. Check cooling system."
+
+        # NVLink bandwidth degradation
+        - alert: NVLinkBandwidthLow
+          expr: DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL < 100
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "NVLink bandwidth low on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "NVLink bandwidth is {{ $value }}MB/s. Expected >300MB/s for H100 NVLink. Check NVLink connections."
+
+    - name: gpu.availability
+      rules:
+        # GPU not reporting metrics
+        - alert: GPUMetricsMissing
+          expr: absent(DCGM_FI_DEV_GPU_UTIL)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No GPU metrics being reported"
+            description: "DCGM Exporter is not reporting any GPU metrics. Check if DCGM Exporter and GPU Operator pods are running."

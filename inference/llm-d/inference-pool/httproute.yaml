@@ -1,0 +1,47 @@
+# HTTPRoute: Connects the Gateway to the InferencePool
+# Routes /v1/* traffic from the inference gateway to the vLLM pool
+# The EPP handles model-aware routing within the pool
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: inference-route
+  namespace: inference
+  labels:
+    app.kubernetes.io/name: inference-route
+    app.kubernetes.io/component: inference-routing
+    app.kubernetes.io/part-of: llm-inference
+spec:
+  parentRefs:
+    - name: inference-gateway
+      namespace: gateway
+      sectionName: llm-api
+  rules:
+    # Route all OpenAI-compatible API paths to the inference pool
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/chat/completions
+        - path:
+            type: PathPrefix
+            value: /v1/completions
+        - path:
+            type: PathPrefix
+            value: /v1/models
+        - path:
+            type: PathPrefix
+            value: /v1/embeddings
+      backendRefs:
+        - group: inference.networking.x-k8s.io
+          kind: InferencePool
+          name: vllm-pool
+          port: 8000
+    # Health check route (direct to pool)
+    - matches:
+        - path:
+            type: Exact
+            value: /health
+      backendRefs:
+        - group: inference.networking.x-k8s.io
+          kind: InferencePool
+          name: vllm-pool
+          port: 8000

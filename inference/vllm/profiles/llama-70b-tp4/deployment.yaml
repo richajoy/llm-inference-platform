@@ -1,0 +1,72 @@
+# Kustomize patch: Llama 3.3 70B with Tensor Parallelism = 4
+# Full-precision 70B model across 4 H100 GPUs with chunked prefill and FP8 KV cache
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-70b-tp4
+  namespace: inference
+spec:
+  selector:
+    matchLabels:
+      app: vllm-70b-tp4
+  template:
+    metadata:
+      labels:
+        app: vllm-70b-tp4
+        model: llama-3-3-70b-instruct
+        profile: tp4
+    spec:
+      containers:
+        - name: vllm
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--model"
+            - "/models/meta-llama--Llama-3.3-70B-Instruct"
+            - "--served-model-name"
+            - "meta-llama/Llama-3.3-70B-Instruct"
+            - "--tensor-parallel-size"
+            - "4"
+            - "--gpu-memory-utilization"
+            - "0.90"
+            - "--max-model-len"
+            - "8192"
+            - "--max-num-batched-tokens"
+            - "8192"
+            - "--max-num-seqs"
+            - "256"
+            - "--enable-prefix-caching"
+            - "--kv-cache-dtype"
+            - "fp8"
+            - "--enable-chunked-prefill"
+            - "--dtype"
+            - "auto"
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: 4
+            limits:
+              cpu: "16"
+              memory: 128Gi
+              nvidia.com/gpu: 4
+          volumeMounts:
+            - name: model-weights
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        - name: model-weights
+          persistentVolumeClaim:
+            claimName: model-weights
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi

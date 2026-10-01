@@ -1,0 +1,38 @@
+# GPU Operator overlay for MIG Single Strategy
+# Use: helm upgrade gpu-operator nvidia/gpu-operator -f values.yaml -f values-mig-single.yaml
+#
+# In "single" strategy, ALL GPUs on a node must use the same MIG profile.
+# The profile is selected via node label: nvidia.com/mig.config=<profile-name>
+# The MIG Manager watches this label and reconfigures GPUs accordingly.
+
+migManager:
+  enabled: true
+  config:
+    name: mig-parted-config
+    default: all-disabled
+  env:
+    - name: MIG_PARTED_SELECTED_CONFIG
+      value: ""
+    - name: WITH_REBOOT
+      value: "false"
+
+# Device Plugin must advertise MIG devices, not whole GPUs
+devicePlugin:
+  enabled: true
+  config:
+    name: device-plugin-config
+    default: mig-single
+  env:
+    - name: MIG_STRATEGY
+      value: single
+    - name: FAIL_ON_INIT_ERROR
+      value: "true"
+
+# GPU Feature Discovery must report MIG device attributes
+gfd:
+  enabled: true
+  env:
+    - name: MIG_STRATEGY
+      value: single
+    - name: GFD_SLEEP_INTERVAL
+      value: "60s"

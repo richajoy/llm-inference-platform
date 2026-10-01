@@ -1,0 +1,48 @@
+# KubeRay Operator Helm Values
+# Manages Ray clusters on Kubernetes via RayCluster/RayJob/RayService CRDs
+# Chart: kuberay/kuberay-operator
+# Docs: https://docs.ray.io/en/latest/cluster/kubernetes/index.html
+---
+
+# Operator configuration
+image:
+  repository: quay.io/kuberay/operator
+  tag: v1.3.0
+  pullPolicy: IfNotPresent
+
+# Operator replicas (leader election enabled for HA)
+replicaCount: 1
+
+# Resource limits for the operator pod itself
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Watch all namespaces or specific ones
+watchNamespace:
+  - inference
+
+# CRD management
+crds:
+  enabled: true
+
+# Service account
+serviceAccount:
+  create: true
+  name: kuberay-operator
+
+# Leader election for HA
+leaderElection:
+  enabled: true
+
+# Batch scheduler integration (for gang scheduling GPU pods)
+batchScheduler:
+  enabled: false
+  # Set to "volcano" or "yunikorn" for gang scheduling
+  # Ensures all workers are scheduled atomically (all or none)
+  # Prevents deadlock where half the nodes are scheduled but model
+  # requires all nodes to start

@@ -1,0 +1,32 @@
+# LMCache configuration for disaggregated P/D KV-cache transfer
+# Local copy for Kustomize (canonical version in inference/vllm/configmaps/)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lmcache-config
+  namespace: inference
+  labels:
+    app: vllm
+    app.kubernetes.io/name: lmcache-config
+    app.kubernetes.io/component: inference-engine
+    app.kubernetes.io/part-of: llm-inference
+data:
+  lmcache-prefiller.yaml: |
+    chunk_size: 256
+    local_cpu: false
+    enable_nixl: true
+    nixl_role: "sender"
+    nixl_peer_host: "vllm-70b-decode"
+    nixl_peer_port: 55555
+    nixl_buffer_size: 1073741824
+    nixl_buffer_device: "cuda"
+
+  lmcache-decoder.yaml: |
+    chunk_size: 256
+    local_cpu: false
+    enable_nixl: true
+    nixl_role: "receiver"
+    nixl_peer_host: "vllm-70b-prefill"
+    nixl_peer_port: 55555
+    nixl_buffer_size: 1073741824
+    nixl_buffer_device: "cuda"
