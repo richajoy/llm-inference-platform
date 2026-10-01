@@ -106,6 +106,45 @@ spec:
             summary: "NVLink bandwidth low on {{ $labels.node }} GPU {{ $labels.gpu }}"
             description: "NVLink bandwidth is {{ $value }}MB/s. Expected >300MB/s for H100 NVLink. Check NVLink connections."
 
+    - name: gpu.memory-integrity
+      rules:
+        # Uncorrectable ECC: the GPU will drop the affected context; drain the node
+        - alert: GPUDoubleBitECCError
+          expr: increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL[1h]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Double-bit ECC error on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "{{ $value }} uncorrectable ECC error(s) in the last hour. Cordon the node and reset the GPU; recurring DBEs mean an RMA."
+
+        # Row remapper exhausted: the GPU can no longer heal HBM errors
+        - alert: GPURowRemapFailure
+          expr: DCGM_FI_DEV_ROW_REMAP_FAILURE > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Row remap failure on {{ $labels.node }} GPU {{ $labels.gpu }}"
+            description: "The HBM row remapper reported a failure. NVIDIA guidance is to replace the GPU."
+
+    - name: gpu.efficiency
+      rules:
+        # Decode-bound serving: SMs busy but tensor cores idle. This is the
+        # roofline memory-bound regime; the fix is more batching (KEDA scales
+        # replicas DOWN or raises max-num-seqs), not more GPUs.
+        - alert: GPUTensorPipeIdleUnderLoad
+          expr: |
+            DCGM_FI_PROF_SM_ACTIVE > 0.6
+            and DCGM_FI_PROF_PIPE_TENSOR_ACTIVE < 0.15
+            and DCGM_FI_PROF_DRAM_ACTIVE > 0.5
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: "GPU {{ $labels.gpu }} on {{ $labels.node }} is memory-bandwidth bound"
+            description: "SM active {{ $value }} with tensor pipe <15% and DRAM >50% for 30m: decode is HBM-bound. Increase effective batch size (higher --max-num-seqs, fewer replicas) before adding GPUs. See docs/gpu-roofline-model.md."
+
     - name: gpu.availability
       rules:
         # GPU not reporting metrics

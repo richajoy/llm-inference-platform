@@ -1,0 +1,46 @@
+# Offline evaluation job in the `batch` queue with the `train` priority class
+# (value 50, preemptible). It can borrow idle GPUs above the queue's 1-GPU
+# quota; when `inference-prod` scales up and needs its quota back, KAI evicts
+# this job first. The Job controller re-creates the pod and KAI re-queues it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lm-eval-llama-70b
+  namespace: inference
+spec:
+  backoffLimit: 10          # tolerate preemption-driven restarts
+  template:
+    metadata:
+      labels:
+        kai.scheduler/queue: batch
+        priorityClassName: train
+    spec:
+      schedulerName: kai-scheduler
+      restartPolicy: OnFailure
+      containers:
+        - name: eval
+          image: vllm/vllm-openai:v0.11.0
+          command: ["python", "-m", "lm_eval"]
+          args:
+            - --model=vllm
+            - --model_args=pretrained=meta-llama/Llama-3.3-70B-Instruct,tensor_parallel_size=2,quantization=fp8
+            - --tasks=gsm8k,mmlu
+            - --batch_size=auto
+            - --output_path=/results
+          env:
+            - name: HF_HOME
+              value: /models
+          resources:
+            limits:
+              nvidia.com/gpu: 2
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: results
+              mountPath: /results
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: model-cache
+        - name: results
+          emptyDir: {}

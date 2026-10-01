@@ -1,0 +1,95 @@
+# Hierarchical scheduling queues for an 8xH100 node shared by three tenants.
+#
+# Units: cpu in millicores, memory in MB, gpu in whole devices (fractions of a
+# device count against the queue's gpu quota).
+#
+#   quota            guaranteed share; non-preemptible workloads (inference,
+#                    build) can only run inside it
+#   overQuotaWeight  how idle capacity is split among queues of equal priority
+#   limit            hard cap; -1 = unlimited
+#   priority         which queue is served first when contending above quota
+#
+# Only leaf queues accept workloads. `gpu-cluster` is the organizational root.
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: gpu-cluster
+spec:
+  displayName: "GPU cluster (8xH100)"
+  resources:
+    gpu:
+      quota: 8
+      limit: 8
+    cpu:
+      quota: -1
+      limit: -1
+    memory:
+      quota: -1
+      limit: -1
+---
+# Production inference: guaranteed 5 GPUs, may burst to all 8 when others idle.
+# Highest priority so it reclaims first under contention.
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: inference-prod
+spec:
+  displayName: "Inference (production)"
+  parentQueue: gpu-cluster
+  priority: 200
+  resources:
+    gpu:
+      quota: 5
+      overQuotaWeight: 3
+      limit: 8
+    cpu:
+      quota: -1
+      limit: -1
+    memory:
+      quota: -1
+      limit: -1
+---
+# Shared dev/eval tenant: 2 GPUs guaranteed, typically consumed as fractions
+# (e.g. four 0.5-GPU Llama-8B replicas), can burst to 4.
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: inference-dev
+spec:
+  displayName: "Inference (dev / eval)"
+  parentQueue: gpu-cluster
+  priority: 100
+  resources:
+    gpu:
+      quota: 2
+      overQuotaWeight: 1
+      limit: 4
+    cpu:
+      quota: -1
+      limit: -1
+    memory:
+      quota: -1
+      limit: -1
+---
+# Batch jobs (offline eval, fine-tunes, data generation): 1 GPU guaranteed,
+# unlimited burst, lowest priority. Workloads here run with the `train`
+# priority class and are preempted when inference-prod needs its quota back.
+apiVersion: scheduling.run.ai/v2
+kind: Queue
+metadata:
+  name: batch
+spec:
+  displayName: "Batch / preemptible"
+  parentQueue: gpu-cluster
+  priority: 50
+  resources:
+    gpu:
+      quota: 1
+      overQuotaWeight: 1
+      limit: -1
+    cpu:
+      quota: -1
+      limit: -1
+    memory:
+      quota: -1
+      limit: -1

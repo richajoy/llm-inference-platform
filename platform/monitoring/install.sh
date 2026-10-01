@@ -112,6 +112,7 @@ spec:
 EOSM
 else
   echo "  No GPU Operator DCGM found. Installing standalone DCGM Exporter."
+  kubectl apply -f "${SCRIPT_DIR}/dcgm-exporter/dcgm-metrics-configmap.yaml"
   helm repo add nvidia https://helm.ngc.nvidia.com/nvidia 2>/dev/null || true
   helm repo update nvidia
   helm upgrade --install dcgm-exporter nvidia/dcgm-exporter \

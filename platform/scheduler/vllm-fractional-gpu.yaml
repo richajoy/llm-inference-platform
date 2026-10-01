@@ -1,0 +1,105 @@
+# Llama 3.1 8B FP8 on half an H100, scheduled by KAI in the `inference-dev`
+# queue. Two replicas share one GPU (gpu-fraction 0.5 each); the scheduler
+# packs fractions onto the same device and counts 1.0 against the queue quota.
+#
+# Compare with MIG (inference/vllm/profiles/*mig*): MIG gives hardware
+# isolation and a fixed 1g.10gb slice; fractional GPU gives software
+# partitioning at any ratio without reconfiguring the GPU, at the cost of
+# weaker isolation (NonMemoryEnforced mode does not cap CUDA memory; use
+# HamiCore or NvFractions mode for enforcement).
+#
+# --gpu-memory-utilization must match the fraction: vLLM profiles free HBM at
+# startup and would otherwise claim the whole device for KV cache.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-llama-8b-fractional
+  namespace: inference
+  labels:
+    app: vllm
+    profile: llama-8b-fractional
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm
+      profile: llama-8b-fractional
+  template:
+    metadata:
+      labels:
+        app: vllm
+        profile: llama-8b-fractional
+        kai.scheduler/queue: inference-dev
+        # Optional; Deployments default to `inference` (125, non-preemptible).
+        priorityClassName: inference
+      annotations:
+        gpu-fraction: "0.5"
+        # Alternative, memory-based request (MiB): gpu-memory: "40960"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      schedulerName: kai-scheduler
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.11.0
+          args:
+            - --model=meta-llama/Llama-3.1-8B-Instruct
+            - --quantization=fp8
+            - --gpu-memory-utilization=0.45   # half the device, minus headroom
+            - --max-model-len=8192
+            - --max-num-seqs=64
+            - --enable-prefix-caching
+            - --port=8000
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            - name: HF_HOME
+              value: /models
+          ports:
+            - containerPort: 8000
+              name: http
+          # No nvidia.com/gpu request: KAI admission rejects pods that mix a
+          # fractional annotation with a whole-GPU resource request.
+          resources:
+            requests:
+              cpu: "4"
+              memory: 24Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: model-cache
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-llama-8b-fractional
+  namespace: inference
+spec:
+  selector:
+    app: vllm
+    profile: llama-8b-fractional
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

@@ -1,0 +1,73 @@
+# Curated DCGM field list for LLM inference nodes.
+# Mounted by dcgm-exporter/values.yaml (extraConfigMapVolumes) and passed with
+# `-f /etc/dcgm-exporter/dcp-metrics-included.csv`. The list is complete, not
+# additive: anything not listed here is not exported.
+#
+# Field reference: https://docs.nvidia.com/datacenter/dcgm/latest/dcgm-api/dcgm-api-field-ids.html
+# Profiling (DCGM_FI_PROF_*) fields need the DCP-capable exporter image and
+# are what distinguish "GPU busy" from "tensor cores busy"; for decode-bound
+# LLM serving SM_ACTIVE is high while PIPE_TENSOR_ACTIVE is low.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dcgm-metrics-config
+  namespace: gpu-operator
+  labels:
+    app.kubernetes.io/part-of: llm-inference-platform
+data:
+  metrics.csv: |
+    # Format: DCGM FIELD, Prometheus metric type, help message
+
+    # ---- Clocks and power ----
+    DCGM_FI_DEV_SM_CLOCK,              gauge, SM clock frequency (MHz)
+    DCGM_FI_DEV_MEM_CLOCK,             gauge, Memory clock frequency (MHz)
+    DCGM_FI_DEV_POWER_USAGE,           gauge, Power draw (W)
+    DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (mJ)
+    DCGM_FI_DEV_GPU_TEMP,              gauge, GPU temperature (C)
+    DCGM_FI_DEV_MEMORY_TEMP,           gauge, HBM temperature (C)
+    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS, gauge, Bitmask of current clock throttle reasons
+
+    # ---- Utilization (coarse) ----
+    DCGM_FI_DEV_GPU_UTIL,              gauge, GPU utilization (%)
+    DCGM_FI_DEV_MEM_COPY_UTIL,         gauge, Memory copy engine utilization (%)
+    DCGM_FI_DEV_ENC_UTIL,              gauge, Encoder utilization (%)
+    DCGM_FI_DEV_DEC_UTIL,              gauge, Decoder utilization (%)
+
+    # ---- Utilization (profiling: what the roofline model needs) ----
+    DCGM_FI_PROF_GR_ENGINE_ACTIVE,     gauge, Ratio of time the graphics engine is active
+    DCGM_FI_PROF_SM_ACTIVE,            gauge, Ratio of cycles at least one warp is active on an SM
+    DCGM_FI_PROF_SM_OCCUPANCY,         gauge, Ratio of warps resident on SMs vs theoretical max
+    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,   gauge, Ratio of cycles the tensor (HMMA) pipe is active
+    DCGM_FI_PROF_PIPE_FP16_ACTIVE,     gauge, Ratio of cycles the FP16 pipe is active
+    DCGM_FI_PROF_DRAM_ACTIVE,          gauge, Ratio of cycles the device memory interface is active
+    DCGM_FI_PROF_PCIE_TX_BYTES,        counter, PCIe bytes transmitted
+    DCGM_FI_PROF_PCIE_RX_BYTES,        counter, PCIe bytes received
+    DCGM_FI_PROF_NVLINK_TX_BYTES,      counter, NVLink bytes transmitted
+    DCGM_FI_PROF_NVLINK_RX_BYTES,      counter, NVLink bytes received
+
+    # ---- Memory ----
+    DCGM_FI_DEV_FB_FREE,               gauge, Framebuffer memory free (MiB)
+    DCGM_FI_DEV_FB_USED,               gauge, Framebuffer memory used (MiB)
+    DCGM_FI_DEV_FB_TOTAL,              gauge, Framebuffer memory total (MiB)
+
+    # ---- Errors and health ----
+    DCGM_FI_DEV_XID_ERRORS,            gauge, Most recent XID error code
+    DCGM_FI_DEV_ECC_SBE_VOL_TOTAL,     counter, Volatile single-bit ECC errors
+    DCGM_FI_DEV_ECC_DBE_VOL_TOTAL,     counter, Volatile double-bit ECC errors
+    DCGM_FI_DEV_RETIRED_PAGES_SBE,     counter, Pages retired due to single-bit errors
+    DCGM_FI_DEV_RETIRED_PAGES_DBE,     counter, Pages retired due to double-bit errors
+    DCGM_FI_DEV_ROW_REMAP_FAILURE,     gauge, Row remapper failure (1 = GPU needs replacement)
+    DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Rows remapped for uncorrectable errors
+    DCGM_FI_DEV_PCIE_REPLAY_COUNTER,   counter, PCIe replay count
+
+    # ---- NVLink / NVSwitch ----
+    DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, counter, Total NVLink bandwidth (KB/s)
+    DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, NVLink flit CRC errors
+    DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, NVLink replay errors
+
+    # ---- MIG ----
+    # With DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE=uid every series carries
+    # GPU_I_ID / GPU_I_PROFILE labels, so the fields above are reported per
+    # MIG instance; these two give the slice's own capacity.
+    DCGM_FI_DEV_MIG_MODE,              gauge, MIG mode (0 off, 1 on)
+    DCGM_FI_DEV_MIG_MAX_SLICES,        gauge, Maximum MIG slices supported by this GPU

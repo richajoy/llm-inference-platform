@@ -1,0 +1,52 @@
+# Scrape KAI Scheduler components with the platform's kube-prometheus-stack.
+# Selectors follow upstream docs/metrics/service-monitors.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kai-scheduler
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: [kai-scheduler]
+  selector:
+    matchLabels:
+      app: kai-scheduler-default
+  endpoints:
+    - port: http-metrics
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kai-queue-controller
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: [kai-scheduler]
+  selector:
+    matchLabels:
+      app: queue-controller
+  endpoints:
+    - port: metrics
+      interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kai-binder
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: [kai-scheduler]
+  selector:
+    matchLabels:
+      app: binder
+  endpoints:
+    - port: http-metrics
+      interval: 15s
